@@ -23,3 +23,5 @@ service/led-mapping.txt
 service/led-interpolation.txt
 
 test-autostart
+
+test-retry

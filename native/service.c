@@ -23,6 +23,7 @@
 #include "interpolation.h"
 #include "layout.h"
 #include "autostart.h"
+#include "retry.h"
 #define SERVICE "org.webosbrew.histogramhyperion.service"
 #define PRIORITY 149
 typedef struct {int code;char *message;const char *file;int line;const char *func;void *padding;unsigned long magic;} LSError;
@@ -59,8 +60,7 @@ static bool color_valid;
 static unsigned led_count;
 static LedBlend *led_blends;
 static bool interpolation_enabled;
-static unsigned recovery_attempts;
-static uint64_t retry_at;
+static RetryState retries;
 static uint64_t milliseconds(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000+t.tv_nsec/1000000;}
 static char last_error[256];
 static volatile sig_atomic_t revoked,quitting;
@@ -118,54 +118,63 @@ static void stop_capture(void){
  if(capture){vt_finish(capture);capture=NULL;}
 }
 static bool respond(void *h,void *m,const char *s){if(!h||!m)return true;LSError e;error_init(&e);bool ok=reply(h,m,s,&e);error_free(&e);return ok;}
+static bool start_failure(void *h,void *m,const char *message){
+ retry_update(&retries,boot_enabled() && geteuid()==0,false,milliseconds());
+ char json[512];snprintf(json,sizeof(json),"{\"returnValue\":false,\"errorText\":\"%s\",\"retryScheduled\":%s,\"retryBlocked\":%s}",message,retries.due?"true":"false",retries.blocked?"true":"false");
+ return respond(h,m,json);
+}
 static bool start(void *h,void *m,void *ctx){
  (void)ctx;const char *p=m?payload(m):NULL;
  if(p && strcmp(p,"{}")!=0)return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Start expects an empty object; endpoint is localhost:19444\"}");
+ if(m)retry_reset(&retries);
  if(capture)return respond(h,m,"{\"returnValue\":true,\"running\":true}");
- if(m){retry_at=0;recovery_attempts=0;}
  frames=0;revoked=0;last_error[0]=0;lg_diagnostic[0]=0;
- if(!enter_developer_mode()){set_error("Developer initialization needs root. Elevate this own service through Homebrew Channel.");return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Root access is required for temporary LG developer initialization\"}");}
- capture=vt_init(policy);
- if(!leave_developer_mode()){stop_capture();set_error("Could not restore LG developer marker; check vt_devmode before retrying");return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Developer marker cleanup failed\"}");}
- if(!capture){set_error("LG could not acquire the histogram capture resource. Check for another active capture source; no colors are being sent.");return respond(h,m,"{\"returnValue\":false,\"errorCode\":1,\"errorText\":\"LG refused histogram initialization. Another capture source may hold VT_CAPTURE. No colors are being sent.\"}");}
- if(vt_preset(capture,0)!=0){stop_capture();set_error("LG histogram preset initialization failed");return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Histogram preset failed\"}");}
- capture_preset=letterbox_mode=settling=0;pending_letterbox=-1;next_border_probe=0;
  output=socket(AF_INET,SOCK_STREAM,0);
  struct timeval timeout={1,0};
  if(output>=0){setsockopt(output,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));setsockopt(output,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));}
  struct sockaddr_in a={.sin_family=AF_INET,.sin_port=htons(19444),.sin_addr={htonl(INADDR_LOOPBACK)}};
- if(output<0||connect(output,(void*)&a,sizeof(a))!=0){stop_capture();set_error("Hyperion JSON server is unavailable on localhost:19444");return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Cannot connect to local Hyperion\"}");}
- if(!read_layout()){stop_capture();set_error("Cannot read a valid LED layout from Hyperion");return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Cannot read Hyperion LED layout\"}");}
+ if(output<0||connect(output,(void*)&a,sizeof(a))!=0){stop_capture();set_error("Hyperion JSON server is unavailable on localhost:19444");return start_failure(h,m,"Cannot connect to local Hyperion");}
+ if(!read_layout()){stop_capture();set_error("Cannot read a valid LED layout from Hyperion");return start_failure(h,m,"Cannot read Hyperion LED layout");}
+ if(!enter_developer_mode()){stop_capture();set_error("Developer initialization needs root. Elevate this own service through Homebrew Channel.");return start_failure(h,m,"Root access is required for temporary LG developer initialization");}
+ capture=vt_init(policy);
+ if(!leave_developer_mode()){stop_capture();retries.blocked=true;set_error("Developer marker cleanup failed; manual intervention required");return start_failure(h,m,"Developer marker cleanup failed");}
+ if(!capture){stop_capture();set_error("LG refused histogram initialization");return start_failure(h,m,"LG refused histogram initialization. Another capture source may hold VT_CAPTURE.");}
+ if(vt_preset(capture,0)!=0){stop_capture();set_error("LG histogram preset initialization failed");return start_failure(h,m,"Histogram preset failed");}
+ capture_preset=letterbox_mode=settling=0;pending_letterbox=-1;next_border_probe=0;
+ retries.due=0;retries.attempts=0;
  return respond(h,m,"{\"returnValue\":true,\"running\":true}");
 }
-static bool stop(void *h,void *m,void *ctx){(void)ctx;retry_at=0;recovery_attempts=0;stop_capture();return respond(h,m,"{\"returnValue\":true,\"running\":false}");}
+static bool stop(void *h,void *m,void *ctx){(void)ctx;retry_pause(&retries);stop_capture();return respond(h,m,"{\"returnValue\":true,\"running\":false}");}
 static bool autostart(void *h,void *m,void *ctx){
  (void)ctx;const char *p=m?payload(m):NULL;bool enabled;
  if(p && strcmp(p,"{\"enabled\":true}")==0)enabled=true;
  else if(p && strcmp(p,"{\"enabled\":false}")==0)enabled=false;
  else return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Expected enabled boolean\"}");
  if(geteuid()!=0 || !set_boot(enabled))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Autostart could not be saved. Check own service root elevation and boot hook.\"}");
+ if(enabled)retry_reset(&retries);
+ retry_update(&retries,enabled,capture!=NULL,milliseconds());
  return respond(h,m,enabled?"{\"returnValue\":true,\"autostart\":true}":"{\"returnValue\":true,\"autostart\":false}");
 }
 static bool status(void *h,void *m,void *ctx){
  (void)ctx;char json[4096],safe[512];size_t n=0;
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
- int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.6.3\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",capture?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.6.4\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",capture?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);
- snprintf(json+used,sizeof(json)-used,"],\"preset\":%u,\"saturationGain\":2.0,\"brightnessGain\":1.33,\"spatialInterpolation\":%s,\"blackBarDetection\":true,\"autostart\":%s,\"letterboxDetected\":%s}",capture_preset,interpolation_enabled?"true":"false",boot_enabled()?"true":"false",capture&&letterbox_mode?"true":"false");return respond(h,m,json);
+ snprintf(json+used,sizeof(json)-used,"],\"preset\":%u,\"saturationGain\":2.0,\"brightnessGain\":1.33,\"spatialInterpolation\":%s,\"blackBarDetection\":true,\"autostart\":%s,\"retryScheduled\":%s,\"retryPaused\":%s,\"retryBlocked\":%s,\"retryAttempts\":%u,\"letterboxDetected\":%s}",capture_preset,interpolation_enabled?"true":"false",boot_enabled()?"true":"false",retries.due?"true":"false",retries.paused?"true":"false",retries.blocked?"true":"false",retries.attempts,capture&&letterbox_mode?"true":"false");return respond(h,m,json);
 }
 static int tick(void *unused){
  (void)unused;
  if(!capture){
-  if(retry_at && milliseconds()>=retry_at){
-   retry_at=0;recovery_attempts++;start(NULL,NULL,NULL);
-   if(!capture && recovery_attempts<6)retry_at=milliseconds()+5000;
+  retry_update(&retries,boot_enabled() && geteuid()==0,false,milliseconds());
+  if(retry_take(&retries,milliseconds())){
+   start(NULL,NULL,NULL);
+   if(!capture)retry_failure(&retries,milliseconds());
   }
   return 1;
  }
- if(revoked){set_error("LG revoked capture; retrying initialization after source transition");stop_capture();recovery_attempts=0;retry_at=milliseconds()+5000;return 1;}
+ if(revoked){set_error("LG revoked capture; retrying initialization after source transition");stop_capture();retries.attempts=0;retry_failure(&retries,milliseconds());return 1;}
  if(settling){settling--;return 1;}
  if(letterbox_mode && capture_preset==1 && milliseconds()>=next_border_probe){
   if(vt_preset(capture,0)!=0){set_error("Border probe preset failed");stop_capture();return 1;}

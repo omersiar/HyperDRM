@@ -19,7 +19,7 @@ The capture initializer temporarily creates `/var/luna/preferences/vt_devmode` t
 
 No writes to signed system partitions. Writes outside the service container are limited to the own Homebrew autostart symlink, bounded boot log and transient developer marker. A guardian removes the own marker after initialization or process termination; a previously existing marker is preserved. Concurrent writes/power loss remain review considerations.
 
-The boot hook is a symlink to `service/boot.sh` in the installed container. The script checks for its executable and service metadata before acting, checks them again on every retry, and exits when the hook is disabled or the target is removed. Only an exact known legacy own hook is migrated; foreign files/symlinks are rejected. Logs are truncated at each invocation and per-attempt output is bounded.
+The boot hook is a symlink to `service/boot.sh` in the installed container. The script checks for its executable and service metadata before acting, checks them again on every retry, and exits when the hook is disabled or the target is removed. Since 0.6.4 it delegates ongoing Hyperion recovery to the native service once startup or background retries are accepted. Only an exact known legacy own hook is migrated; foreign files/symlinks are rejected. Logs are truncated at each invocation and contain only startup/delegation/cancellation messages, so waiting has no unbounded boot-log growth.
 
 ## Source, licence and release
 
@@ -41,3 +41,11 @@ Platform: LG G4, Rockhopper 10.2.2-57, SoC o24. Package: HyperDRM 0.6.1.
 - Restored the user's enabled autostart setting. No Hyperion configuration, PicCap or foreign hook was changed.
 
 This is an actual package lifecycle test, not a TV factory reset and not a cold boot.
+
+## Persistent startup/reconnect retries (0.6.4)
+
+With autostart enabled, the native service retries startup every five seconds without an attempt limit. Hyperion TCP availability and layout are checked before acquiring capture. The boot hook exits once native startup or background retries are accepted; it no longer owns the long-running reconnect loop. Manual Stop pauses retries for the current service session. Start or re-enabling autostart resumes them. Failed developer-marker cleanup blocks retries until manual intervention. Turning autostart off cancels automatic pending attempts.
+
+ARM retry-state tests on the G4 passed 10000 delayed-start attempts, five-second pacing, manual Stop, disabling autostart, the cleanup safety block, bounded non-autostart source recovery and disconnect retry. Live tests temporarily stopped and restored Hyperion without changing configuration; automatic retry continued beyond six attempts (observed counts 10 and 11). Manual Stop left retryPaused:true and retryScheduled:false after Hyperion was restored.
+
+A second live disconnect test confirmed retryScheduled:true while Hyperion was unavailable, followed by running:true and colorValid:true automatically within the six-second observation window after Hyperion restarted, without a new HyperDRM Start command.

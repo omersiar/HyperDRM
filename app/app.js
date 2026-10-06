@@ -16,6 +16,8 @@ function display(result){
  else if(result.returnValue!==false)document.getElementById('status').textContent+=' · No current color output';
  if(result.blackBarDetection && result.running)document.getElementById('status').textContent+=result.letterboxDetected?' · Top/bottom black bars detected':' · Full-screen capture';
  if(result.spatialInterpolation)document.getElementById('status').textContent+=' · Smooth color transitions';
+ if(result.retryScheduled)document.getElementById('status').textContent+=' · Retrying startup every 5 seconds';
+ if(result.retryPaused)document.getElementById('status').textContent+=' · Automatic retry paused until Start';
  var box=document.getElementById('regions');box.textContent='';
  (result.regions||[]).forEach(function(rgb,index){var e=document.createElement('div');e.className='swatch';e.style.backgroundColor='rgb('+rgb.join(',')+')';e.title='Histogram '+index;box.appendChild(e);});
 }

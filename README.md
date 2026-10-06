@@ -25,7 +25,7 @@ Only the own service is modified. No Hue, LG library, driver or firmware binarie
 
 ## Installation
 
-The current package is [HyperDRM_0.6.3_arm.ipk](HyperDRM_0.6.3_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.6.4_arm.ipk](HyperDRM_0.6.4_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -41,9 +41,9 @@ The internal app/service IDs remain `org.webosbrew.histogramhyperion` and `org.w
 
 ## Autostart
 
-The app's **Autostart: On/Off** switch controls the own hook `/var/lib/webosbrew/init.d/60-histogramhyperion`. Homebrew Channel runs it during boot after service elevation. It retries start while the TV and Hyperion initialize, with up to 120 attempts separated by five seconds. The Homebrew failsafe can suppress boot hooks.
+The app's **Autostart: On/Off** switch controls the own hook `/var/lib/webosbrew/init.d/60-histogramhyperion`. Homebrew Channel runs it during boot after service elevation. The boot hook waits until the native service accepts startup, then exits. With autostart enabled, the native service retries every five seconds without an attempt limit when startup fails or the Hyperion connection drops. It checks Hyperion before acquiring the LG capture resource. The Homebrew failsafe can suppress boot hooks.
 
-**Stop** ends the current capture session and leaves the saved autostart preference unchanged. The hook is a symlink to `boot.sh` inside the service container. Removal leaves a harmless dangling link; the script also exits when its service target is absent. Turning autostart off removes the own hook and cancels waiting boot attempts. A foreign file or symlink at that path will not be overwritten.
+**Stop** ends the current capture session and pauses retries until **Start** or the next service launch/boot; it leaves the saved autostart preference unchanged. The hook is a symlink to `boot.sh` inside the service container. Removal leaves a harmless dangling link; the script also exits when its service target is absent. Turning autostart off removes the own hook and cancels waiting boot attempts. A foreign file or symlink at that path will not be overwritten.
 
 Boot log: `/var/lib/webosbrew/histogramhyperion-boot.log`.
 
