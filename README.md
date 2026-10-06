@@ -9,7 +9,7 @@ Ambient Light for webOS and Hyperion. An own webOS app and native ARM service th
 - Spatial colors from 16 LG histogram regions with interpolated transitions along the screen perimeter.
 - LED count, ordering and screen rectangles read from Hyperion at each service start. No fixed 200-LED layout; layouts with 50 and 500 LEDs were tested.
 - Automatic detection of top/bottom black bars on the calibrated LG G4.
-- Saturation and brightness boost (2.0 and 1.33 respectively).
+- Original saturation and brightness (both gains 1.0).
 - Start, stop, status and persistent boot autostart switch in the TV app.
 - Local Hyperion JSON connection on `127.0.0.1:19444`, priority 149, up to 10 updates per second.
 
@@ -25,7 +25,7 @@ Only the own service is modified. Optional Auto PicCap can start and stop the in
 
 ## Installation
 
-The current package is [HyperDRM_0.7.1_arm.ipk](HyperDRM_0.7.1_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.7.2_arm.ipk](HyperDRM_0.7.2_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
