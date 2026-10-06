@@ -150,7 +150,7 @@ static bool autostart(void *h,void *m,void *ctx){
 static bool status(void *h,void *m,void *ctx){
  (void)ctx;char json[4096],safe[512];size_t n=0;
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
- int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.6.1\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",capture?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.6.2\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",capture?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);

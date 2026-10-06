@@ -25,7 +25,7 @@ Only the own service is modified. No Hue, LG library, driver or firmware binarie
 
 ## Installation
 
-The current package is [HyperDRM_0.6.1_arm.ipk](HyperDRM_0.6.1_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.6.2_arm.ipk](HyperDRM_0.6.2_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -35,15 +35,15 @@ luna-send -n 1 luna://org.webosbrew.hbchannel.service/elevateService '{"id":"org
 
 Perform elevation before first opening the app or calling its service. If the service was already started without root, elevation updates its launch permissions but does not restart the existing process: terminate only the own `histogram-service` process (verify its executable path first), then reopen the app or call start again. Closing the UI alone does not terminate the native service.
 
-Open **HyperDRM** on the TV and select **Starten**. Hyperion's JSON server must be enabled on port 19444. The existing Hyperion LED device/output configuration remains responsible for controlling the hardware.
+Open **HyperDRM** on the TV and select **Start**. Hyperion's JSON server must be enabled on port 19444. The existing Hyperion LED device/output configuration remains responsible for controlling the hardware.
 
 The internal app/service IDs remain `org.webosbrew.histogramhyperion` and `org.webosbrew.histogramhyperion.service` so existing installations and the autostart hook remain compatible. Hyperion displays the source as **HyperDRM**. After changing the LED layout, restart the service.
 
 ## Autostart
 
-The app's **Autostart: Ein/Aus** switch controls the own hook `/var/lib/webosbrew/init.d/60-histogramhyperion`. Homebrew Channel runs it during boot after service elevation. It retries start while the TV and Hyperion initialize, with up to 120 attempts separated by five seconds. The Homebrew failsafe can suppress boot hooks.
+The app's **Autostart: On/Off** switch controls the own hook `/var/lib/webosbrew/init.d/60-histogramhyperion`. Homebrew Channel runs it during boot after service elevation. It retries start while the TV and Hyperion initialize, with up to 120 attempts separated by five seconds. The Homebrew failsafe can suppress boot hooks.
 
-**Stoppen** ends the current capture session and leaves the saved autostart preference unchanged. The hook is a symlink to `boot.sh` inside the service container. Removal leaves a harmless dangling link; the script also exits when its service target is absent. Turning autostart off removes the own hook and cancels waiting boot attempts. A foreign file or symlink at that path will not be overwritten.
+**Stop** ends the current capture session and leaves the saved autostart preference unchanged. The hook is a symlink to `boot.sh` inside the service container. Removal leaves a harmless dangling link; the script also exits when its service target is absent. Turning autostart off removes the own hook and cancels waiting boot attempts. A foreign file or symlink at that path will not be overwritten.
 
 Boot log: `/var/lib/webosbrew/histogramhyperion-boot.log`.
 
