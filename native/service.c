@@ -61,6 +61,8 @@ static unsigned led_count;
 static LedBlend *led_blends;
 static bool interpolation_enabled;
 static RetryState retries;
+static unsigned capture_recoveries;
+static uint64_t recovery_started,last_recovery_ms;
 static uint64_t milliseconds(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000+t.tv_nsec/1000000;}
 static char last_error[256];
 static volatile sig_atomic_t revoked,quitting;
@@ -111,12 +113,13 @@ static bool read_layout(void){
  }
  bool ok=complete && layout_from_json(data,&led_blends,&led_count);free(data);interpolation_enabled=ok;return ok;
 }
-static void stop_capture(void){
+static void release_capture(bool clear_output){
  free(led_blends);led_blends=NULL;led_count=0;interpolation_enabled=false;
  color_valid=false;memset(rgb,0,sizeof(rgb));memset(sent_rgb,0,sizeof(sent_rgb));
- if(output>=0){if(frames){char line[80];snprintf(line,sizeof(line),"{\"command\":\"clear\",\"priority\":%d}\n",PRIORITY);send_line(line);}close(output);output=-1;}
+ if(output>=0){if(clear_output && frames){char line[80];snprintf(line,sizeof(line),"{\"command\":\"clear\",\"priority\":%d}\n",PRIORITY);send_line(line);}close(output);output=-1;}
  if(capture){vt_finish(capture);capture=NULL;}
 }
+static void stop_capture(void){release_capture(true);}
 static bool respond(void *h,void *m,const char *s){if(!h||!m)return true;LSError e;error_init(&e);bool ok=reply(h,m,s,&e);error_free(&e);return ok;}
 #include "handover.h"
 static bool start_failure(void *h,void *m,const char *message){
@@ -143,7 +146,8 @@ static bool start(void *h,void *m,void *ctx){
  if(!capture){stop_capture();set_error("LG refused histogram initialization");return start_failure(h,m,"LG refused histogram initialization. Another capture source may hold VT_CAPTURE.");}
  if(vt_preset(capture,0)!=0){stop_capture();set_error("LG histogram preset initialization failed");return start_failure(h,m,"Histogram preset failed");}
  capture_preset=letterbox_mode=settling=0;pending_letterbox=-1;next_border_probe=0;
- retries.due=0;retries.attempts=0;
+ retries.due=0;retries.attempts=0;retries.quick_retries=0;
+ if(recovery_started){last_recovery_ms=milliseconds()-recovery_started;recovery_started=0;}
  return respond(h,m,"{\"returnValue\":true,\"running\":true}");
 }
 static bool stop(void *h,void *m,void *ctx){(void)ctx;retry_pause(&retries);stop_capture();return respond(h,m,"{\"returnValue\":true,\"running\":false}");}
@@ -171,7 +175,7 @@ static bool handover(void *h,void *m,void *ctx){
 static bool status(void *h,void *m,void *ctx){
  (void)ctx;char json[4096],safe[512];size_t n=0;
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
- int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.7.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.7.1\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);
@@ -188,7 +192,7 @@ static int tick(void *unused){
   }
   return 1;
  }
- if(revoked){set_error("LG revoked capture; retrying initialization after source transition");stop_capture();retries.attempts=0;retry_failure(&retries,milliseconds());return 1;}
+ if(revoked){set_error("LG revoked capture; recovering after source transition");capture_recoveries++;recovery_started=milliseconds();release_capture(false);retry_source_transition(&retries,milliseconds());return 1;}
  if(settling){settling--;return 1;}
  if(letterbox_mode && capture_preset==1 && milliseconds()>=next_border_probe){
   if(vt_preset(capture,0)!=0){set_error("Border probe preset failed");stop_capture();return 1;}

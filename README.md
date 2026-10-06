@@ -25,7 +25,7 @@ Only the own service is modified. Optional Auto PicCap can start and stop the in
 
 ## Installation
 
-The current package is [HyperDRM_0.7.0_arm.ipk](HyperDRM_0.7.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.7.1_arm.ipk](HyperDRM_0.7.1_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -95,3 +95,7 @@ When the session is started, the controller polls LG's active media resources. T
 The switch is saved in the own service container and applies after reboot when Autostart is enabled. Stop pauses both managed capture paths until Start. Turning Auto PicCap off stops a PicCap session started by this controller and restores HyperDRM. Avoid starting another capture service independently while automatic handover is active.
 
 The app displays the selected source and PicCap's Hyperion connection status. Histogram region swatches are hidden while PicCap supplies the colors. Playback classification and isolated controller tests are in `native/test_playback.c` and `native/test_handover.c`; link both with `-ldl`.
+
+## Capture interruption recovery
+
+LG may revoke histogram capture during playback transitions. From 0.7.1, HyperDRM releases capture while leaving its last color update to expire normally after 1.5 seconds, then retries initialization after 200 ms and up to two additional 400 ms intervals. Successful recovery clears this rapid retry budget. Persistent failure returns to the existing five-second retry interval; manual Stop, PicCap handover and shutdown still explicitly clear the own color source. Status exposes `captureRecoveries` and `lastRecoveryMs` for diagnosis.

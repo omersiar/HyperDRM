@@ -5,7 +5,7 @@
 #include <limits.h>
 #define RETRY_DELAY_MS 5000
 /* Continuous autostart retries and bounded manual source recovery. */
-typedef struct {uint64_t due;unsigned attempts;bool automatic,paused,blocked;} RetryState;
+typedef struct {uint64_t due;unsigned attempts,quick_retries;bool automatic,paused,blocked;} RetryState;
 static void retry_reset(RetryState *state){*state=(RetryState){0};}
 static void retry_pause(RetryState *state){retry_reset(state);state->paused=true;}
 static void retry_update(RetryState *state,bool enabled,bool running,uint64_t now){
@@ -19,6 +19,12 @@ static bool retry_take(RetryState *state,uint64_t now){
  state->due=0;if(state->attempts<UINT_MAX)state->attempts++;return true;
 }
 static void retry_failure(RetryState *state,uint64_t now){
- if(!state->paused && !state->blocked && (state->automatic || state->attempts<6))state->due=now+RETRY_DELAY_MS;
+ if(!state->paused && !state->blocked && (state->automatic || state->attempts<6)){
+  if(state->quick_retries){state->quick_retries--;state->due=now+400;}
+  else state->due=now+RETRY_DELAY_MS;
+ }
+}
+static inline void retry_source_transition(RetryState *state,uint64_t now){
+ if(!state->paused && !state->blocked){state->attempts=0;state->quick_retries=2;state->due=now+200;}
 }
 #endif

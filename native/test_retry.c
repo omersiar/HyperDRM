@@ -21,5 +21,11 @@ int main(void){
  assert(state.attempts==6 && !state.due);
  retry_reset(&state);retry_update(&state,true,true,now);assert(!state.due);
  retry_update(&state,true,false,now);assert(state.due==now+5000);
- puts("PASS: 10000 delayed-start attempts, five-second pacing, Stop pause, autostart off, safety block, bounded manual recovery, disconnect retry");
+ retry_reset(&state);retry_source_transition(&state,now);assert(state.due==now+200);
+ assert(!retry_take(&state,now+199));assert(retry_take(&state,now+200));retry_failure(&state,now+200);assert(state.due==now+600);
+ assert(retry_take(&state,now+600));retry_failure(&state,now+600);assert(state.due==now+1000);
+ assert(retry_take(&state,now+1000));retry_failure(&state,now+1000);assert(state.due==now+6000);
+ retry_pause(&state);retry_source_transition(&state,now);assert(!state.due);
+ retry_reset(&state);state.blocked=true;retry_source_transition(&state,now);assert(!state.due);
+ puts("PASS: startup retries, bounded rapid source recovery, Stop pause and cleanup safety block");
 }
