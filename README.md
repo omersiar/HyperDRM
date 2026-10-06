@@ -7,7 +7,7 @@ Ambient Light for webOS, Hyperion and HyperHDR. An own webOS app and native ARM 
 ## Features
 
 - Spatial colors from 16 LG histogram regions with interpolated transitions along the screen perimeter.
-- LED count, ordering and screen rectangles read from Hyperion at each service start. No fixed 200-LED layout; layouts with 50 and 500 LEDs were tested.
+- LED count, ordering and screen rectangles read from the receiver at startup and refreshed every five seconds without capture restart. No fixed 200-LED layout; layouts with 50 and 500 LEDs were tested.
 - Automatic detection of top/bottom black bars on the calibrated LG G4.
 - Original saturation and brightness (both gains 1.0).
 - Start, stop, status and persistent boot autostart switch in the TV app.
@@ -19,13 +19,13 @@ Tested on a rooted LG G4 with webOS 24, Homebrew Channel and Hyperion 2.0.16 and
 
 DRM playback color output was confirmed on the test TV. Support depends on LG's capture implementation; this does not guarantee support on other devices or apps. HyperDRM transmits colors, not captured video frames. The video preview does not show the TV picture. HyperHDR may show a generated histogram color plane instead.
 
-The 16 histogram samples are independent measurements; interpolation produces smoother transitions without adding independently captured detail. Sample positions are approximate G4 calibration values. Top/bottom bar detection is supported; side bars, arbitrary bar thickness and HDR color calibration remain limited.
+The 16 histogram samples are independent measurements; interpolation produces smoother transitions without adding independently captured detail. Sample positions come from the selected model profile; the built-in profile contains approximate G4 calibration values. Auto uses uniform average colors on uncalibrated models. Top/bottom bar detection is supported; side bars, arbitrary bar thickness and HDR color calibration remain limited.
 
 Only the own service is modified. Optional Auto PicCap can configure its receiver endpoint and start and stop the installed PicCap service through its existing API. No Hue, LG library, driver or firmware binaries are included. For histogram initialization, the service temporarily creates LG's developer marker and uses a guardian process to remove its own marker afterward; an existing marker is preserved.
 
 ## Installation
 
-The current package is [HyperDRM_0.9.0_arm.ipk](HyperDRM_0.9.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.10.0_arm.ipk](HyperDRM_0.10.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -90,7 +90,7 @@ Remote navigation regression tests: `node tests/remote-navigation.test.js`.
 
 Version 0.7.0 adds **Auto PicCap**, disabled by default. The switch is available when PicCap is installed. Keep PicCap's own autostart disabled. From 0.9.0, HyperDRM manages PicCap's receiver address, FlatBuffer port and Unix socket setting when automatic handover is enabled; other capture preferences and the autostart preference are preserved.
 
-When the session is started, the controller polls LG's active media resources. Two consecutive foreground media-decoder samples without a Secure Video Path resource allow PicCap to start. HyperDRM releases its histogram capture and clears priority 149 first, allowing PicCap's configured input priority to take over. Any `SVP_CPB` resource selects protected playback; missing, stale, malformed, idle or HDMI state selects the conservative HyperDRM fallback. PicCap must confirm that it has stopped before histogram capture resumes. Detection is specific to the tested G4 resource model, not a universal DRM-state API.
+When the session is started, the controller polls LG's active media resources. From 0.10.0, three consecutive foreground media-decoder samples over at least two seconds without a Secure Video Path resource allow PicCap to start. HyperDRM releases its histogram capture and clears priority 149 first, allowing PicCap's configured input priority to take over. Any `SVP_CPB` resource selects protected playback immediately. Missing, stale, malformed, idle or HDMI state selects the conservative HyperDRM fallback; an already active PicCap session gets at most 1.5 seconds of unknown-state grace for short playback pauses. Unknown states never start PicCap. PicCap must confirm that it has stopped before histogram capture resumes. Detection is specific to the tested G4 resource model, not a universal DRM-state API.
 
 The switch is saved in the own service container and applies after reboot when Autostart is enabled. Stop pauses both managed capture paths until Start. Turning Auto PicCap off stops a PicCap session started by this controller and restores HyperDRM. Avoid starting another capture service independently while automatic handover is active.
 
@@ -127,3 +127,15 @@ The diagnostic line reports service version/root status, capture transition, pla
 Before PicCap starts, its endpoint is read through getSettings. Matching settings are reused. Otherwise setSettings updates only address, port and unix-socket:false; the official implementation restarts PicCap itself, so the controller checks status rather than issuing another start. Endpoint changes are saved by PicCap and remain after disabling handover. Changing the receiver stops the managed PicCap session before configuring the new endpoint. Settings errors/timeouts stop PicCap before histogram fallback, with a cooldown to avoid rapid restarts.
 
 Feature tests are native/test_diagnostics.c, native/test_target.c, native/test_handover.c and tests/receiver-ui.test.js. The native tests cover fragmented replies, rejected authentication, invalid layout, refused connection, timeout, custom PicCap endpoint, configuration failure and exclusive capture ownership. Test-only JSON and FlatBuffer relays allow a real receiver to be reached through another IP and ports without changing receiver configuration.
+
+## Capture resilience and live layout (0.10.0)
+
+If managed PicCap reports disconnected for five seconds, HyperDRM requests its stop, waits for confirmed stopped status and resumes histogram output. Reconnection inside that window clears the loss timer. A 30-second cooldown prevents immediate PicCap restart after a connection failure; normal capture transitions have a three-second reentry delay. Manual Stop, disabling handover, changing the receiver and secure playback take precedence over unknown-state grace.
+
+While a capture session runs, a separate nonblocking authenticated JSON connection checks the LED layout every five seconds. Changed LED count, positions or order replace the validated mapping between frames. Invalid or timed-out responses retain the last good mapping and report a layout error; capture continues. Profile changes cancel obsolete probes. Receiver JSON streaming and the user connection test have independent sockets. HyperHDR continues to apply its own current LED rectangles to the generated color plane.
+
+## TV model profiles (0.10.0)
+
+Select Auto, LG G4 (measured), Average (uniform), or Custom model in TV calibration and select Save profile. The app obtains the model identifier through LG's system-property service. Auto selects an imported profile matching that exact identifier, then the built-in G4 series profile, otherwise uniform average colors. Unknown models are not assigned an invented spatial calibration. A manual G4 selection is available when model detection is unavailable.
+
+Custom imports accept measured model JSON with 2-16 sorted clockwise perimeter points and histogram region indices 0-15. Profiles persist privately in the own service container and apply to the current session without restarting capture. See [profile format and calibration guidance](profiles/README.md). Only G4 hardware has been validated; importing a profile does not guarantee histogram support on another TV. Color calibration remains in Hyperion/HyperHDR.

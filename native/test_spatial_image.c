@@ -13,5 +13,12 @@ int main(void){
  command=spatial_image_command(regions,149);encoded=strstr(command,"\"imagedata\":\"")+13;
  assert(memcmp(encoded,encoded+(SPATIAL_WIDTH-1)*4,4));
  assert(memcmp(encoded,encoded+(SPATIAL_PIXELS-SPATIAL_WIDTH)*4,4));free(command);
+ calibration=(Calibration){.kind=CAL_CUSTOM,.count=2,.points={{0,2},{2,10}}};calibration_generation++;
+ command=spatial_image_command(regions,149);encoded=strstr(command,"\"imagedata\":\"")+13;
+ const char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+ unsigned char expected[3],actual[3];LedBlend custom=layout_blend(.5/SPATIAL_WIDTH,.5/SPATIAL_HEIGHT);
+ blend_color(regions[custom.a],regions[custom.b],custom.weight,expected);
+ unsigned v[4];for(unsigned i=0;i<4;i++)v[i]=(unsigned)(strchr(alphabet,encoded[i])-alphabet);
+ actual[0]=(v[0]<<2)|(v[1]>>4);actual[1]=(v[1]<<4)|(v[2]>>2);actual[2]=(v[2]<<6)|v[3];assert(!memcmp(expected,actual,3));free(command);
  puts("PASS: image command, exact neutral RGB base64, spatial edge differences and cached geometry");return 0;
 }

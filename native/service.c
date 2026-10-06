@@ -114,7 +114,8 @@ static bool read_layout(void){
  if(send_line("{\"command\":\"serverinfo\"}\n")==0){
   while(used<capacity){ssize_t n=recv(output,data+used,capacity-used,0);if(n<=0)break;used+=(size_t)n;data[used]=0;char *end=strchr(data,'\n');if(end){*end=0;complete=true;break;}}
  }
- bool ok=complete && layout_from_json(data,&led_blends,&led_count);free(data);interpolation_enabled=ok;return ok;
+ LedBlend *mapping=NULL;unsigned count=0;bool ok=complete && layout_from_json(data,&mapping,&count);
+ if(ok){free(led_blends);led_blends=mapping;led_count=count;}free(data);interpolation_enabled=ok && calibration_effective()!=CAL_AVERAGE;return ok;
 }
 static bool target_login(void){
  if(!target.token[0])return true;
@@ -128,7 +129,9 @@ static bool target_login(void){
  PlaybackJson json={0};if(!playback_json_init(&json))return false;
  void *root=json.parse(answer);bool ok=playback_true(&json,root,"success");if(root)json.put(root);dlclose(json.lib);return ok;
 }
+static void layout_refresh_reset(uint64_t due);
 static void release_capture(bool clear_output){
+ layout_refresh_reset(milliseconds()+5000);
  free(led_blends);led_blends=NULL;led_count=0;interpolation_enabled=false;
  color_valid=false;memset(rgb,0,sizeof(rgb));memset(sent_rgb,0,sizeof(sent_rgb));
  if(output>=0){if(clear_output && frames){char line[80];snprintf(line,sizeof(line),"{\"command\":\"clear\",\"priority\":%d}\n",PRIORITY);send_line(line);}close(output);output=-1;}
@@ -137,6 +140,32 @@ static void release_capture(bool clear_output){
 static void stop_capture(void){release_capture(true);}
 static bool respond(void *h,void *m,const char *s){if(!h||!m)return true;LSError e;error_init(&e);bool ok=reply(h,m,s,&e);error_free(&e);return ok;}
 #include "handover.h"
+#include "layout_refresh.h"
+static bool model_busy;
+static unsigned long model_token;
+static uint64_t model_deadline,next_model_probe;
+static bool model_reply(void *h,void *m,void *ctx){
+ (void)h;(void)ctx;model_busy=false;model_token=0;
+ void *root=playback_json.parse(payload(m)),*model=playback_field(&playback_json,root,"modelName");
+ if(playback_true(&playback_json,root,"returnValue") && model && playback_json.type(model)==6 && calibration_model_valid(playback_json.string(model))){
+  snprintf(tv_model,sizeof(tv_model),"%s",playback_json.string(model));calibration_generation++;layout_refresh_reset(milliseconds());
+ }
+ if(root)playback_json.put(root);
+ return true;
+}
+static void model_tick(uint64_t now){
+ if(model_busy && now>=model_deadline){LSError e;error_init(&e);cancel_call(service_handle,model_token,&e);error_free(&e);model_busy=false;model_token=0;}
+ if(!tv_model[0] && !model_busy && now>=next_model_probe){
+  LSError e;error_init(&e);model_busy=call_once(service_handle,"luna://com.webos.service.tv.systemproperty/getSystemInfo","{\"keys\":[\"modelName\"]}",model_reply,NULL,&model_token,&e);error_free(&e);model_deadline=now+3000;next_model_probe=now+60000;
+ }
+}
+static bool set_calibration(void *h,void *m,void *ctx){
+ (void)ctx;Calibration next=calibration;
+ if(!playback_json.lib || !calibration_parse(&playback_json,payload(m),&next))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Select a valid profile; custom profiles need a model and 2-16 sorted rim points (position 0-4, region 0-15)\"}");
+ if(!calibration_save(CALIBRATION_PREF,&next))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Cannot save calibration profile\"}");
+ calibration=next;calibration_generation++;layout_refresh_reset(milliseconds());
+ return respond(h,m,"{\"returnValue\":true}");
+}
 static bool start_failure(void *h,void *m,const char *message){
  retry_update(&retries,boot_enabled() && geteuid()==0,false,milliseconds());
  char json[512];snprintf(json,sizeof(json),"{\"returnValue\":false,\"errorText\":\"%s\",\"retryScheduled\":%s,\"retryBlocked\":%s}",message,retries.due?"true":"false",retries.blocked?"true":"false");
@@ -182,7 +211,7 @@ static bool handover(void *h,void *m,void *ctx){
  if(!playback_json.lib || geteuid()!=0)return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Root service and JSON-C are required\"}");
  if(enabled && !piccap_installed())return respond(h,m,"{\"returnValue\":false,\"errorText\":\"PicCap is not installed\"}");
  if(!handover_save(enabled))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Could not save PicCap handover preference\"}");
- handover_enabled=enabled;protection=PLAYBACK_UNKNOWN;clear_samples=0;next_media_probe=0;
+ handover_enabled=enabled;protection=PLAYBACK_UNKNOWN;clear_samples=0;clear_since=unknown_since=0;next_media_probe=0;
  return respond(h,m,"{\"returnValue\":true}");
 }
 static bool settings(void *h,void *m,void *ctx){
@@ -190,7 +219,7 @@ static bool settings(void *h,void *m,void *ctx){
  if(!playback_json.lib || !target_parse(&playback_json,payload(m),&next))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Enter a valid IPv4/IPv6 address, integer port (1-65535), receiver and optional API token\"}");
  if(!target_save(TARGET_PREF,&next))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Could not save receiver settings\"}");
  bool active=capture || piccap_owned || retries.due;
- stop_capture();test_close();connection_test.stage=TEST_IDLE;target=next;last_error[0]=0;protection=PLAYBACK_UNKNOWN;clear_samples=0;
+ stop_capture();test_close();connection_test.stage=TEST_IDLE;target=next;last_error[0]=0;protection=PLAYBACK_UNKNOWN;clear_samples=0;clear_since=unknown_since=0;
  if(active && !retries.paused && !retries.blocked)retries.due=milliseconds();
  return respond(h,m,"{\"returnValue\":true}");
 }
@@ -205,8 +234,11 @@ static bool status(void *h,void *m,void *ctx){
  snprintf(endpoint,sizeof(endpoint),strchr(target.host,':')?"[%s]:%u":"%s:%u",target.host,target.port);
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
  uint64_t now=milliseconds();
- int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"piccapPort\":%u,\"connectionTest\":{\"state\":\"%s\",\"ledCount\":%u,\"elapsedMs\":%llu,\"error\":\"%s\"},\"lastOutputAgeMs\":%lld,\"retryInMs\":%llu,\"captureState\":\"%s\",\"piccapError\":\"%s\",",target.piccap_port,test_stage_name(),connection_test.leds,(unsigned long long)connection_test.elapsed,connection_test.error,last_output_at?(long long)(now-last_output_at):-1,(unsigned long long)(retries.due>now?retries.due-now:0),capture_source==SOURCE_PICCAP_STARTING?"Starting PicCap":capture_source==SOURCE_PICCAP_STOPPING?"Stopping PicCap":piccap_owned?"PicCap":capture?"Histogram":"Stopped",piccap_error);
- used+=snprintf(json+used,sizeof(json)-used,"\"version\":\"0.9.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"%s\",\"host\":\"%s\",\"port\":%u,\"receiver\":\"%s\",\"tokenSet\":%s,\"piccapTargetCompatible\":%s,\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,endpoint,target.host,target.port,target.receiver,target.token[0]?"true":"false",target_piccap_compatible(&target)?"true":"false",PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ int used=snprintf(json,sizeof(json),"{\"calibrationProfile\":\"%s\",\"effectiveCalibration\":\"%s\",\"tvModel\":\"%s\",\"customModel\":\"%s\",\"customPoints\":[",calibration_key(calibration.kind),calibration_key(calibration_effective()),tv_model,calibration.model);
+ for(unsigned i=0;i<calibration.count;i++)used+=snprintf(json+used,sizeof(json)-used,"%s{\"position\":%.12g,\"region\":%u}",i?",":"",calibration.points[i].position,calibration.points[i].region);
+ used+=snprintf(json+used,sizeof(json)-used,"],\"layoutUpdates\":%u,\"lastLayoutCheckAgeMs\":%lld,\"layoutError\":\"%s\",\"piccapFallbacks\":%u,\"piccapCooldownMs\":%llu,",layout_updates,last_layout_check?(long long)(now-last_layout_check):-1,layout_error,piccap_fallbacks,(unsigned long long)(handover_cooldown>now?handover_cooldown-now:0));
+ used+=snprintf(json+used,sizeof(json)-used,"\"returnValue\":true,\"piccapPort\":%u,\"connectionTest\":{\"state\":\"%s\",\"ledCount\":%u,\"elapsedMs\":%llu,\"error\":\"%s\"},\"lastOutputAgeMs\":%lld,\"retryInMs\":%llu,\"captureState\":\"%s\",\"piccapError\":\"%s\",",target.piccap_port,test_stage_name(),connection_test.leds,(unsigned long long)connection_test.elapsed,connection_test.error,last_output_at?(long long)(now-last_output_at):-1,(unsigned long long)(retries.due>now?retries.due-now:0),capture_source==SOURCE_PICCAP_STARTING?"Starting PicCap":capture_source==SOURCE_PICCAP_STOPPING?"Stopping PicCap":piccap_owned?"PicCap":capture?"Histogram":"Stopped",piccap_error);
+ used+=snprintf(json+used,sizeof(json)-used,"\"version\":\"0.10.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"%s\",\"host\":\"%s\",\"port\":%u,\"receiver\":\"%s\",\"tokenSet\":%s,\"piccapTargetCompatible\":%s,\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,endpoint,target.host,target.port,target.receiver,target.token[0]?"true":"false",target_piccap_compatible(&target)?"true":"false",PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);
@@ -214,7 +246,8 @@ static bool status(void *h,void *m,void *ctx){
 }
 static int tick(void *unused){
  (void)unused;
- test_tick(&playback_json,milliseconds());
+ uint64_t now=milliseconds();
+ model_tick(now);test_tick(&playback_json,now);layout_refresh_tick(&playback_json,now,capture || capture_source==SOURCE_PICCAP);
  if(handover_tick())return 1;
  if(!capture){
   retry_update(&retries,boot_enabled() && geteuid()==0,false,milliseconds());
@@ -257,14 +290,16 @@ static int tick(void *unused){
  }
  for(int c=0;c<3;c++)sent_rgb[c]=(unsigned char)(aggregate[c]/16);
  unsigned char boosted_mean[3];boost_color(sent_rgb,boosted_mean);memcpy(sent_rgb,boosted_mean,3);
+ unsigned char mapped_rgb[16][3];calibration_colors(rgb,mapped_rgb);
+ interpolation_enabled=led_count && calibration_effective()!=CAL_AVERAGE;
  bool image_output=strcmp(target.receiver,"HyperHDR")==0;
- size_t capacity=256+(size_t)led_count*12;char *line=image_output?spatial_image_command(rgb,PRIORITY):malloc(capacity);
+ size_t capacity=256+(size_t)led_count*12;char *line=image_output?spatial_image_command(mapped_rgb,PRIORITY):malloc(capacity);
  if(!line){set_error("Color buffer allocation failed");stop_capture();return 1;}
  if(!image_output){
  size_t written=(size_t)snprintf(line,capacity,"{\"command\":\"color\",\"priority\":%d,\"duration\":1500,\"origin\":\"HyperDRM\",\"color\":[",PRIORITY);
  for(unsigned i=0;i<led_count;i++){
   unsigned char interpolated[3],boosted[3];LedBlend blend=led_blends[i];
-  blend_color(rgb[blend.a],rgb[blend.b],blend.weight,interpolated);boost_color(interpolated,boosted);
+  blend_color(mapped_rgb[blend.a],mapped_rgb[blend.b],blend.weight,interpolated);boost_color(interpolated,boosted);
   written+=(size_t)snprintf(line+written,capacity-written,"%s%u,%u,%u",i?",":"",boosted[0],boosted[1],boosted[2]);
  }
  snprintf(line+written,capacity-written,"]}\n");
@@ -286,7 +321,7 @@ int main(void){
  vt_init=symbol(vt,"vtCapture_initHistogram");vt_preset=symbol(vt,"vtCapture_setPresetHistogram");vt_get=symbol(vt,"vtCapture_getHistogram");vt_finish=symbol(vt,"vtCapture_finalizeHistogram");
  call_once=symbol(ls,"LSCallOneReply");
  cancel_call=symbol(ls,"LSCallCancel");
- if(playback_json_init(&playback_json)){handover_load();target_load(&playback_json,TARGET_PREF,&target);}
+ if(playback_json_init(&playback_json)){handover_load();target_load(&playback_json,TARGET_PREF,&target);calibration_load(&playback_json,CALIBRATION_PREF);}
  reply=symbol(ls,"LSMessageReply");payload=symbol(ls,"LSMessageGetPayload");error_init=symbol(ls,"LSErrorInit");error_free=symbol(ls,"LSErrorFree");
  bool (*reg)(const char*,void**,LSError*)=symbol(ls,"LSRegister");
  bool (*category)(void*,const char*,Method*,void*,void*,LSError*)=symbol(ls,"LSRegisterCategory");
@@ -297,7 +332,7 @@ int main(void){
  unsigned (*timer)(unsigned,int(*)(void*),void*)=symbol(glib,"g_timeout_add");
  void (*loop_unref)(void*)=symbol(glib,"g_main_loop_unref");
  void *handle=NULL,*loop=loop_new(NULL,0);LSError e;error_init(&e);
- Method methods[]={{"start",start,0},{"stop",stop,0},{"status",status,0},{"autostart",autostart,0},{"handover",handover,0},{"settings",settings,0},{"testConnection",test_connection,0},{NULL,NULL,0}};
+ Method methods[]={{"start",start,0},{"stop",stop,0},{"status",status,0},{"autostart",autostart,0},{"handover",handover,0},{"settings",settings,0},{"testConnection",test_connection,0},{"calibration",set_calibration,0},{NULL,NULL,0}};
  if(!reg(SERVICE,&handle,&e)||!category(handle,"/",methods,NULL,NULL,&e)||!attach(handle,loop,&e)){fprintf(stderr,"Luna registration failed: %s\n",e.message?e.message:"unknown");error_free(&e);return 3;}
  service_handle=handle;
  if(!boot_enabled())retry_pause(&retries);

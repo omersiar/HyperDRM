@@ -30,6 +30,10 @@ key(39);assert.equal(doc.activeElement.id,'start');key(37);assert.equal(doc.acti
 buttons[2].tagName='INPUT';buttons[2].type='text';buttons[2].focus();
 assert(!key(37));assert(!key(39));assert(!key(13));assert.equal(doc.activeElement.id,'refresh');
 key(40);assert.equal(doc.activeElement.id,'autostart');key(38);assert.equal(doc.activeElement.id,'refresh');
+buttons[2].tagName='TEXTAREA';buttons[2].focus();
+assert(!key(37));assert(!key(39));assert(!key(13));
+key(40);assert.equal(doc.activeElement.id,'autostart');
+key(38);assert.equal(doc.activeElement.id,'refresh');
 buttons[2].tagName='BUTTON';
 buttons.forEach(button=>button.disabled=true);assert(key(39));
 console.log('PASS: arrow navigation, wraparound, disabled controls, OK once per press, pointer handoff, focus recovery, Back preserved');

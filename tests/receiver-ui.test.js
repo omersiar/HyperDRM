@@ -1,10 +1,10 @@
 'use strict';
 const assert=require('assert'),fs=require('fs'),vm=require('vm');
-const ids=['host','port','piccapPort','receiver','token','clearToken','endpoint','handover','autostart','error','status','regions','start','stop','refresh','saveTarget','testConnection','testResult','diagnostics'];
+const ids=['host','port','piccapPort','receiver','token','clearToken','endpoint','handover','autostart','error','status','regions','start','stop','refresh','saveTarget','testConnection','testResult','diagnostics','profile','customEditor','customProfile','saveProfile','profileStatus'];
 const elements={};
 ids.forEach(id=>elements[id]={value:'',textContent:'',disabled:false,checked:false,attributes:{},style:{},addEventListener(){},focus(){},appendChild(){},setAttribute(k,v){this.attributes[k]=v;},getAttribute(k){return this.attributes[k];}});
 const requests=[];
-const status={returnValue:true,version:'0.9.0',host:'127.0.0.1',port:19444,piccapPort:19400,receiver:'HyperHDR',tokenSet:true,piccapInstalled:true,autostart:true,captureState:'Histogram',playbackProtection:'protected',connectionTest:{state:'Passed',ledCount:120,elapsedMs:300,error:''},uid:0};
+const status={returnValue:true,version:'0.9.0',host:'127.0.0.1',port:19444,piccapPort:19400,receiver:'HyperHDR',tokenSet:true,piccapInstalled:true,autostart:true,captureState:'Histogram',playbackProtection:'protected',connectionTest:{state:'Passed',ledCount:120,elapsedMs:300,error:''},uid:0,calibrationProfile:'auto',effectiveCalibration:'g4',tvModel:'OLED65G42LW.DEUQLJP',customModel:'',customPoints:[]};
 class Bridge {
  call(uri,data){requests.push({uri,data:JSON.parse(data)});this.onservicecallback(JSON.stringify(uri.endsWith('/status')?status:{returnValue:true}));}
  cancel(){}
@@ -21,4 +21,7 @@ elements.piccapPort.value='19446';elements.host.value='10.1.0.100';elements.toke
 const saved=requests.find(r=>r.uri.endsWith('/settings'));assert.strictEqual(saved.data.piccapPort,19446);assert.strictEqual(saved.data.host,'10.1.0.100');assert(!('token' in saved.data));
 elements.testConnection.onclick();assert(requests.some(r=>r.uri.endsWith('/testConnection')));
 assert.strictEqual(elements.token.value,'');assert(!elements.diagnostics.textContent.includes('fixture-token'));
+elements.profile.onclick();assert(elements.profile.textContent.includes('LG G4'));elements.saveProfile.onclick();assert(requests.some(r=>r.uri.endsWith('/calibration')&&r.data.profile==='g4'));
+context.profile='custom';context.showProfile();elements.customProfile.value='invalid';elements.saveProfile.onclick();assert(elements.error.textContent.includes('valid JSON'));
+elements.customProfile.value=JSON.stringify({model:'OTHER-TV',points:[{position:0,region:1},{position:2,region:5}]});elements.saveProfile.onclick();assert(requests.some(r=>r.uri.endsWith('/calibration')&&r.data.model==='OTHER-TV'&&r.data.points.length===2));
 console.log('PASS: receiver fields, port validation, saved-token retention, test control and diagnostics');

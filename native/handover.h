@@ -16,7 +16,12 @@ static bool (*call_once)(void*,const char*,const char*,Callback,void*,unsigned l
 static bool (*cancel_call)(void*,unsigned long,LSError*);
 static unsigned long piccap_token,media_token;
 static uint64_t piccap_deadline,media_deadline;
-static unsigned clear_samples;
+static unsigned clear_samples,piccap_fallbacks;
+static uint64_t clear_since,unknown_since,piccap_disconnected_since;
+#define CLEAR_STABLE_MS 2000
+#define UNKNOWN_GRACE_MS 1500
+#define PICCAP_LOSS_MS 5000
+#define PICCAP_FAILURE_COOLDOWN_MS 30000
 static TargetConfig piccap_target;
 static char piccap_error[128];
 static bool piccap_request(int command);
@@ -38,7 +43,11 @@ static void handover_load(void){
 static bool media_reply(void *h,void *m,void *ctx){
  (void)h;(void)ctx;media_busy=false;media_token=0;
  protection=playback_classify(&playback_json,payload(m));protection_at=milliseconds();
- if(protection==PLAYBACK_CLEAR){if(clear_samples<2)clear_samples++;}else clear_samples=0;
+ if(protection==PLAYBACK_CLEAR){
+  if(!clear_samples)clear_since=protection_at;
+  if(clear_samples<3)clear_samples++;
+  unknown_since=0;
+ }else {clear_samples=0;clear_since=0;if(protection==PLAYBACK_UNKNOWN && !unknown_since)unknown_since=protection_at;else if(protection==PLAYBACK_PROTECTED)unknown_since=0;}
  return true;
 }
 /* Commands: 0 status, 1 start, 2 stop, 3 getSettings, 4 setSettings. Confirm stopped status before VT reuse. */
@@ -50,10 +59,15 @@ static bool piccap_reply(void *h,void *m,void *ctx){
   if(ok && running && playback_json.type(running)==1){
    bool active=playback_json.boolean(running);
    piccap_connected=playback_true(&playback_json,root,"connected");
-   if(active){if(capture_source==SOURCE_PICCAP_STARTING)capture_source=SOURCE_PICCAP;}
+   if(active){
+    if(capture_source==SOURCE_PICCAP_STARTING)capture_source=SOURCE_PICCAP;
+    if(piccap_connected)piccap_disconnected_since=0;
+    else if(!piccap_disconnected_since)piccap_disconnected_since=milliseconds();
+   }
    else if(capture_source!=SOURCE_PICCAP_STARTING || milliseconds()-piccap_action_at>=2000){
     if(capture_source!=SOURCE_PICCAP_STOPPING)handover_cooldown=milliseconds()+10000;
-    piccap_owned=false;capture_source=SOURCE_HISTOGRAM;piccap_connected=false;
+    piccap_owned=false;capture_source=SOURCE_HISTOGRAM;piccap_connected=false;piccap_disconnected_since=0;
+    if(handover_cooldown<milliseconds()+3000)handover_cooldown=milliseconds()+3000;
     if(!retries.paused)retries.due=milliseconds();
    }
   }else if(!piccap_installed()){piccap_owned=false;capture_source=SOURCE_HISTOGRAM;piccap_connected=false;}
@@ -84,7 +98,7 @@ static bool piccap_request(int command){
 /* Return true while PicCap owns capture or a stop confirmation is pending. */
 static bool handover_tick(void){
  uint64_t now=milliseconds();
- if(media_busy && now>=media_deadline){LSError e;error_init(&e);cancel_call(service_handle,media_token,&e);error_free(&e);media_busy=false;media_token=0;protection=PLAYBACK_UNKNOWN;clear_samples=0;}
+ if(media_busy && now>=media_deadline){LSError e;error_init(&e);cancel_call(service_handle,media_token,&e);error_free(&e);media_busy=false;media_token=0;protection=PLAYBACK_UNKNOWN;clear_samples=0;clear_since=0;if(!unknown_since)unknown_since=now;}
  if(piccap_busy && now>=piccap_deadline){snprintf(piccap_error,sizeof(piccap_error),"PicCap request timed out");LSError e;error_init(&e);cancel_call(service_handle,piccap_token,&e);error_free(&e);piccap_busy=false;piccap_token=0;capture_source=SOURCE_PICCAP_STOPPING;next_piccap_probe=0;}
  if(handover_enabled && piccap_installed() && !retries.paused && playback_json.lib && !media_busy && now>=next_media_probe){
   LSError e;error_init(&e);
@@ -92,13 +106,20 @@ static bool handover_tick(void){
   media_deadline=now+3000;
   error_free(&e);next_media_probe=now+1000;
  }
- bool clear=handover_enabled && target_piccap_compatible(&target) && piccap_installed() && !retries.paused && !retries.blocked &&
-  protection==PLAYBACK_CLEAR && clear_samples>=2 && now-protection_at<3000 && now>=handover_cooldown;
- if(capture_source==SOURCE_HISTOGRAM && clear){
-  piccap_target=target;piccap_error[0]=0;stop_capture();retries.due=0;piccap_owned=true;capture_source=SOURCE_PICCAP_STARTING;
-  if(!piccap_request(3)){capture_source=SOURCE_PICCAP_STOPPING;handover_cooldown=now+10000;}
+ if(protection==PLAYBACK_CLEAR && now-protection_at>=3000){protection=PLAYBACK_UNKNOWN;clear_samples=0;clear_since=0;if(!unknown_since)unknown_since=now;}
+ bool session=handover_enabled && target_piccap_compatible(&target) && piccap_installed() && !retries.paused && !retries.blocked;
+ bool clear=session && protection==PLAYBACK_CLEAR && now-protection_at<3000;
+ bool stable=clear && clear_samples>=3 && now-clear_since>=CLEAR_STABLE_MS && now>=handover_cooldown;
+ if(capture_source==SOURCE_HISTOGRAM && stable){
+  piccap_target=target;piccap_error[0]=0;piccap_disconnected_since=now;stop_capture();retries.due=0;piccap_owned=true;capture_source=SOURCE_PICCAP_STARTING;
+  if(!piccap_request(3)){capture_source=SOURCE_PICCAP_STOPPING;handover_cooldown=now+PICCAP_FAILURE_COOLDOWN_MS;}
  }
- if(piccap_owned && (!clear || strcmp(piccap_target.host,target.host) || piccap_target.piccap_port!=target.piccap_port) && capture_source!=SOURCE_PICCAP_STOPPING){capture_source=SOURCE_PICCAP_STOPPING;next_piccap_probe=0;}
+ bool grace=protection==PLAYBACK_UNKNOWN && unknown_since && now-unknown_since<UNKNOWN_GRACE_MS && capture_source==SOURCE_PICCAP;
+ bool lost=piccap_owned && capture_source==SOURCE_PICCAP && piccap_disconnected_since && now-piccap_disconnected_since>=PICCAP_LOSS_MS;
+ if(lost){
+  snprintf(piccap_error,sizeof(piccap_error),"PicCap receiver disconnected; histogram fallback");piccap_fallbacks++;handover_cooldown=now+PICCAP_FAILURE_COOLDOWN_MS;
+ }
+ if(piccap_owned && (!session || (!clear && !grace) || lost || strcmp(piccap_target.host,target.host) || piccap_target.piccap_port!=target.piccap_port) && capture_source!=SOURCE_PICCAP_STOPPING){capture_source=SOURCE_PICCAP_STOPPING;next_piccap_probe=0;}
  if(piccap_owned && !piccap_busy && now>=next_piccap_probe){
   if(capture_source==SOURCE_PICCAP_STOPPING)piccap_request(2);else piccap_request(0);
   next_piccap_probe=now+1000;

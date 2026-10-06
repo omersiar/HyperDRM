@@ -6,19 +6,18 @@
 #include <dlfcn.h>
 #include <math.h>
 typedef struct {unsigned char a,b;unsigned weight;} LedBlend;
-/* Measured G4 rim samples, independent of LED count and wiring order. */
-static const struct {double position;unsigned char region;} rim[]={
- {0.2078431373,7},{0.3176470588,3},{0.5490196078,11},{0.7529411765,12},
- {0.8392156863,13},{1.4941176471,10},{2.1843137255,9},{2.5490196078,1},
- {2.8666666667,5},{3.4,15}
-};
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdio.h>
+#include "calibration.h"
 static double screen_perimeter(double x,double y){
  double distances[]={y,1-x,1-y,x},positions[]={x,1+y,3-x,4-y};unsigned edge=0;
  for(unsigned i=1;i<4;i++)if(distances[i]<distances[edge])edge=i;
  return positions[edge]>=4?positions[edge]-4:positions[edge];
 }
 static LedBlend layout_blend(double x,double y){
- double t=screen_perimeter(x,y);unsigned n=sizeof(rim)/sizeof(*rim),right=0;
+ const RimPoint *rim=calibration_effective()==CAL_CUSTOM?calibration.points:g4_rim;
+ double t=screen_perimeter(x,y);unsigned n=calibration_effective()==CAL_CUSTOM?calibration.count:sizeof(g4_rim)/sizeof(*g4_rim),right=0;
  while(right<n && rim[right].position<=t)right++;
  right%=n;unsigned left=(right+n-1)%n;
  double span=rim[right].position-rim[left].position,distance=t-rim[left].position;
