@@ -26,3 +26,5 @@ call('status',display);setInterval(function(){if(!pending.length)call('status',d
 document.getElementById('start').focus();
 
 document.getElementById('autostart').onclick=function(){var button=this;var enabled=button.getAttribute('aria-checked')!=='true';button.disabled=true;call('autostart',function(r){button.disabled=false;if(r.returnValue===false)document.getElementById('error').textContent=r.errorText;else call('status',display);},{enabled:enabled});};
+
+setupRemoteNavigation(['start','stop','refresh','autostart'].map(function(id){return document.getElementById(id);}),document,window);

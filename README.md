@@ -25,7 +25,7 @@ Only the own service is modified. No Hue, LG library, driver or firmware binarie
 
 ## Installation
 
-The current package is [HyperDRM_0.6.2_arm.ipk](HyperDRM_0.6.2_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.6.3_arm.ipk](HyperDRM_0.6.3_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -35,7 +35,7 @@ luna-send -n 1 luna://org.webosbrew.hbchannel.service/elevateService '{"id":"org
 
 Perform elevation before first opening the app or calling its service. If the service was already started without root, elevation updates its launch permissions but does not restart the existing process: terminate only the own `histogram-service` process (verify its executable path first), then reopen the app or call start again. Closing the UI alone does not terminate the native service.
 
-Open **HyperDRM** on the TV and select **Start**. Hyperion's JSON server must be enabled on port 19444. The existing Hyperion LED device/output configuration remains responsible for controlling the hardware.
+Open **HyperDRM** on the TV and select **Start**. Use the remote arrow buttons to move between controls and OK to activate the selected control. Magic Remote pointer input is also supported. Hyperion's JSON server must be enabled on port 19444. The existing Hyperion LED device/output configuration remains responsible for controlling the hardware.
 
 The internal app/service IDs remain `org.webosbrew.histogramhyperion` and `org.webosbrew.histogramhyperion.service` so existing installations and the autostart hook remain compatible. Hyperion displays the source as **HyperDRM**. After changing the LED layout, restart the service.
 
@@ -83,3 +83,5 @@ The logo master is `app/logo.png`, with 80 px and 130 px installation icons.
 ## Publishing status
 
 See [the publishing review](docs/publishing-review.md) for the requirements audit and unresolved submission conditions. This repository is not a claim that webOSbrew has approved the app.
+
+Remote navigation regression tests: `node tests/remote-navigation.test.js`.
