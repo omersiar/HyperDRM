@@ -1,18 +1,31 @@
 'use strict';
 var pending=[];
 var targetDirty=false,receiver='Hyperion';
-var profileDirty=false,profile='auto';
+var profileDirty=false,profile='auto',advancedProfile=false;
 var profileNames={auto:'Auto',g4:'LG G4 (measured)',average:'Average (uniform)',custom:'Custom model'};
-function showProfile(){document.getElementById('profile').textContent='Profile: '+profileNames[profile];document.getElementById('customEditor').style.display=profile==='custom'?'block':'none';document.getElementById('customProfile').disabled=profile!=='custom';}
-function call(method,done,data){
+function showProfile(){
+ document.getElementById('profile').textContent='Profile: '+profileNames[profile];
+ var visible=profile==='custom' && advancedProfile;
+ document.getElementById('customEditor').style.display=visible?'block':'none';
+ document.getElementById('customProfile').disabled=!visible;
+ document.getElementById('editProfile').disabled=profile!=='custom';
+ document.getElementById('editProfile').textContent=visible?'Hide profile JSON':'Edit profile JSON';
+}
+
+function call(method,done,data){callUri('luna://org.webosbrew.histogramhyperion.service/'+method,done,data);}
+function callUri(uri,done,data){
  if(typeof PalmServiceBridge==='undefined'){done({returnValue:false,errorText:'This app requires an LG TV with the native service installed.'});return;}
  var bridge=new PalmServiceBridge(),timer,finished=false;
  function finish(value){if(finished)return;finished=true;clearTimeout(timer);var i=pending.indexOf(bridge);if(i>=0)pending.splice(i,1);done(value);}
  bridge.onservicecallback=function(raw){try{finish(JSON.parse(raw));}catch(e){finish({returnValue:false,errorText:'Invalid service response'});}};
- pending.push(bridge);timer=setTimeout(function(){bridge.cancel();finish({returnValue:false,errorText:'The service is not responding. Check the installation and service log.'});},10000);
- bridge.call('luna://org.webosbrew.histogramhyperion.service/'+method,JSON.stringify(data||{}));
+ pending.push(bridge);timer=setTimeout(function(){bridge.cancel();finish({returnValue:false,errorText:'The service is not responding. Check the installation and service log.'});},uri.indexOf('hbchannel')>=0?30000:10000);
+ bridge.call(uri,JSON.stringify(data||{}));
 }
 function display(result){
+ if(typeof result.uid==='number'){
+  document.getElementById('grantRoot').style.display=result.uid===0?'none':'inline-block';
+  document.getElementById('rootHint').style.display=result.uid===0?'none':'block';
+ }
  if(result.calibrationProfile && !profileDirty){
   profile=result.calibrationProfile;showProfile();
   document.getElementById('customProfile').value=JSON.stringify({model:result.customModel||result.tvModel||'TV-MODEL',points:result.customPoints&&result.customPoints.length?result.customPoints:[]},null,2);
@@ -46,6 +59,8 @@ function display(result){
  else if(result.returnValue!==false)document.getElementById('status').textContent+=' · No current color output';
  if(result.blackBarDetection && result.running)document.getElementById('status').textContent+=result.letterboxDetected?' · Top/bottom black bars detected':' · Full-screen capture';
  if(result.spatialInterpolation)document.getElementById('status').textContent+=' · Smooth color transitions';
+ if(result.holdingColors)document.getElementById('status').textContent+=' · Holding last valid colors (missing data)';
+ if(result.sourceFade)document.getElementById('status').textContent+=' · Blending capture sources';
  if(result.retryScheduled)document.getElementById('status').textContent+=' · Retrying receiver or capture startup';
  if(result.retryPaused)document.getElementById('status').textContent+=' · Automatic retry paused until Start';
  var box=document.getElementById('regions');box.textContent='';
@@ -57,7 +72,30 @@ document.getElementById('refresh').onclick=function(){call('status',display);};
 call('status',display);setInterval(function(){if(!pending.length)call('status',display);},3000);
 document.getElementById('start').focus();
 
-document.getElementById('autostart').onclick=function(){var button=this;var enabled=button.getAttribute('aria-checked')!=='true';button.disabled=true;call('autostart',function(r){button.disabled=false;if(r.returnValue===false)document.getElementById('error').textContent=r.errorText;else call('status',display);},{enabled:enabled});};
+var repairingRoot=false,rootWaiters=[];
+function repairRoot(done){
+ rootWaiters.push(done);if(repairingRoot)return;repairingRoot=true;document.getElementById('grantRoot').disabled=true;
+ document.getElementById('error').textContent='Granting root access to HyperDRM...';
+ function finish(error){repairingRoot=false;document.getElementById('grantRoot').disabled=false;if(error)document.getElementById('error').textContent=error;var waiters=rootWaiters;rootWaiters=[];waiters.forEach(function(callback){callback(!error);});}
+ callUri('luna://org.webosbrew.hbchannel.service/elevateService',function(r){
+  if(r.returnValue===false){finish('Homebrew Channel could not grant root access: '+(r.errorText||'Check Homebrew Channel installation.'));return;}
+  call('restartService',function(r){
+   if(r.returnValue===false){finish(r.errorText||'Could not restart the HyperDRM service.');return;}
+   var attempts=0;
+   function check(){call('status',function(s){if(s.uid===0){display(s);finish();}else if(++attempts<12)setTimeout(check,1000);else finish('The service is still missing root access. Elevate HyperDRM in Homebrew Channel and reopen the app.');});}
+   setTimeout(check,1500);
+  });
+ },{id:'org.webosbrew.histogramhyperion.service'});
+}
+document.getElementById('grantRoot').onclick=function(){repairRoot(function(ok){if(ok)call('status',display);});};
+document.getElementById('autostart').onclick=function(){
+ var button=this,enabled=button.getAttribute('aria-checked')!=='true';button.disabled=true;
+ function save(){call('autostart',function(r){
+  if(r.rootRequired){repairRoot(function(ok){if(ok)save();else button.disabled=false;});return;}
+  button.disabled=false;if(r.returnValue===false)document.getElementById('error').textContent=r.errorText;else call('status',display);
+ },{enabled:enabled});}
+ save();
+};
 
 document.getElementById('handover').onclick=function(){var button=this;button.disabled=true;call('handover',function(r){button.disabled=false;if(r.returnValue===false)document.getElementById('error').textContent=r.errorText;else call('status',display);},{enabled:button.getAttribute('aria-checked')!=='true'});};
 ['host','port','piccapPort','token','clearToken'].forEach(function(id){document.getElementById(id).addEventListener('input',function(){targetDirty=true;});});
@@ -75,4 +113,5 @@ document.getElementById('testConnection').onclick=function(){if(targetDirty){doc
 document.getElementById('profile').onclick=function(){var keys=['auto','g4','average','custom'];profile=keys[(keys.indexOf(profile)+1)%keys.length];profileDirty=true;showProfile();};
 document.getElementById('customProfile').addEventListener('input',function(){profileDirty=true;});
 document.getElementById('saveProfile').onclick=function(){var data={profile:profile},button=this;if(profile==='custom'){try{var parsed=JSON.parse(document.getElementById('customProfile').value);data.model=parsed.model;data.points=parsed.points;}catch(e){document.getElementById('error').textContent='Custom profile must be valid JSON.';return;}}button.disabled=true;call('calibration',function(r){button.disabled=false;if(r.returnValue===false){document.getElementById('error').textContent=r.errorText;return;}profileDirty=false;call('status',display);},data);};
-setupRemoteNavigation(['start','stop','refresh','autostart','handover','receiver','host','port','piccapPort','token','clearToken','saveTarget','testConnection','profile','customProfile','saveProfile'].map(function(id){return document.getElementById(id);}),document,window);
+document.getElementById('editProfile').onclick=function(){advancedProfile=!advancedProfile;showProfile();if(advancedProfile)document.getElementById('customProfileField').focus();};
+setupRemoteNavigation(['overviewTab','receiverTab','calibrationTab','grantRoot','start','stop','refresh','autostart','handover','calibrationShortcut','receiver','hostField','portField','piccapPortField','tokenField','clearToken','saveTarget','testConnection','calibrate','validateCalibration','profile','saveProfile','editProfile','customProfileField','cancelCalibration'].map(function(id){return document.getElementById(id);}),document,window);

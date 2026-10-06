@@ -1,6 +1,9 @@
 #ifndef HYPERDRM_HANDOVER_H
 #define HYPERDRM_HANDOVER_H
 #include "playback.h"
+#ifndef CALIBRATION_ACTIVE
+#define CALIBRATION_ACTIVE false
+#endif
 #ifndef PICCAP_BINARY
 #define PICCAP_BINARY "/media/developer/apps/usr/palm/services/org.webosbrew.piccap.service/hyperion-webos"
 #endif
@@ -107,11 +110,11 @@ static bool handover_tick(void){
   error_free(&e);next_media_probe=now+1000;
  }
  if(protection==PLAYBACK_CLEAR && now-protection_at>=3000){protection=PLAYBACK_UNKNOWN;clear_samples=0;clear_since=0;if(!unknown_since)unknown_since=now;}
- bool session=handover_enabled && target_piccap_compatible(&target) && piccap_installed() && !retries.paused && !retries.blocked;
+ bool session=!CALIBRATION_ACTIVE && handover_enabled && target_piccap_compatible(&target) && piccap_installed() && !retries.paused && !retries.blocked;
  bool clear=session && protection==PLAYBACK_CLEAR && now-protection_at<3000;
  bool stable=clear && clear_samples>=3 && now-clear_since>=CLEAR_STABLE_MS && now>=handover_cooldown;
  if(capture_source==SOURCE_HISTOGRAM && stable){
-  piccap_target=target;piccap_error[0]=0;piccap_disconnected_since=now;stop_capture();retries.due=0;piccap_owned=true;capture_source=SOURCE_PICCAP_STARTING;
+  piccap_target=target;piccap_error[0]=0;piccap_disconnected_since=now;release_capture(false);retries.due=0;piccap_owned=true;capture_source=SOURCE_PICCAP_STARTING;
   if(!piccap_request(3)){capture_source=SOURCE_PICCAP_STOPPING;handover_cooldown=now+PICCAP_FAILURE_COOLDOWN_MS;}
  }
  bool grace=protection==PLAYBACK_UNKNOWN && unknown_since && now-unknown_since<UNKNOWN_GRACE_MS && capture_source==SOURCE_PICCAP;

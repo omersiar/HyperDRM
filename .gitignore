@@ -39,3 +39,6 @@ test-diagnostics
 test-calibration
 test-layout_refresh
 test-spatial_image
+test-continuity
+test-receiver_stream
+test-source_bridge

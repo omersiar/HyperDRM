@@ -9,6 +9,8 @@ Ambient Light for webOS, Hyperion and HyperHDR. An own webOS app and native ARM 
 - Spatial colors from 16 LG histogram regions with interpolated transitions along the screen perimeter.
 - LED count, ordering and screen rectangles read from the receiver at startup and refreshed every five seconds without capture restart. No fixed 200-LED layout; layouts with 50 and 500 LEDs were tested.
 - Automatic detection of top/bottom black bars on the calibrated LG G4.
+- Bounded last-color hold on empty/failed histogram reads, real black detection and 500 ms source transitions using a raw receiver LED subscription.
+- Guided full-screen video calibration for additional TV models, with review before saving and a four-color validation video.
 - Original saturation and brightness (both gains 1.0).
 - Start, stop, status and persistent boot autostart switch in the TV app.
 - Configurable IPv4/IPv6 receiver and JSON TCP port, optional token authentication, priority 149, up to 10 updates per second.
@@ -25,7 +27,7 @@ Only the own service is modified. Optional Auto PicCap can configure its receive
 
 ## Installation
 
-The current package is [HyperDRM_0.10.0_arm.ipk](HyperDRM_0.10.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.11.0_arm.ipk](HyperDRM_0.11.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -139,3 +141,54 @@ While a capture session runs, a separate nonblocking authenticated JSON connecti
 Select Auto, LG G4 (measured), Average (uniform), or Custom model in TV calibration and select Save profile. The app obtains the model identifier through LG's system-property service. Auto selects an imported profile matching that exact identifier, then the built-in G4 series profile, otherwise uniform average colors. Unknown models are not assigned an invented spatial calibration. A manual G4 selection is available when model detection is unavailable.
 
 Custom imports accept measured model JSON with 2-16 sorted clockwise perimeter points and histogram region indices 0-15. Profiles persist privately in the own service container and apply to the current session without restarting capture. See [profile format and calibration guidance](profiles/README.md). Only G4 hardware has been validated; importing a profile does not guarantee histogram support on another TV. Color calibration remains in Hyperion/HyperHDR.
+
+## Color continuity and guided calibration
+
+A populated histogram containing black pixels is a valid dark scene and is sent
+immediately. Empty channel populations and failed reads are missing data, not
+black. The last good colors are held for at most 1.5 seconds while capture remains
+available; a longer failure triggers bounded capture recovery. Receiver failure
+cannot be hidden by color holding. Real black does not wait for a recovery fade.
+
+Source handovers retain the previous output briefly instead of clearing it before
+PicCap connects. An independent nonblocking raw LED subscription provides the
+previous PicCap colors for the return to HyperDRM, and a fresh PicCap target for
+the forward transition. The transition lasts 500 ms, with a three-second overall
+handover bound. Conversion from LED samples to histogram regions is approximate;
+receiver color correction and configured smoothing remain in the receiver. If
+streaming is unavailable, ordinary bounded source selection still works.
+
+In **TV calibration**, select **Calibration** then **Start Auto Calibration**. The bundled H.264 video
+shows a black reference and 32 white patches around all four edges. Keep the app
+visible and the picture full-screen without zoom or bars. The service temporarily
+disables PicCap handover and bar detection for this measurement, then restores
+normal operation. Cancellation, Back, playback errors and a 110-second service
+lease protect against leaving calibration active after the app closes.
+
+Fresh measurements identify responsive edge regions. Global-only, absent or
+ambiguous responses are rejected without overwriting a saved profile. Successful
+measurements fill the Custom profile editor; choose **Save profile** to apply.
+Select **Validate profile** afterwards: the top-left quadrant is red, top-right
+green, bottom-right blue and bottom-left yellow. Check LED positions on every
+edge. The measured profile is specific to the exact reported model; other models
+still require their own measurement. This does not add HDR color calibration or
+more independently captured regions.
+
+An explicit app launch with `{"action":"calibrate"}` starts the same visible
+wizard. The calibration video can be reproduced with
+`python build_calibration_video.py --ffmpeg /path/to/ffmpeg`.
+
+The TV UI separates Overview, Receiver and Calibration. Auto Calibration is also
+linked from Overview. Fields use focusable selection frames; highlighting or
+hovering a frame never focuses its input. OK or a click starts editing and opens
+the TV keyboard. Keyboard dismissal or Back returns to the selection frame.
+Only visible controls participate in arrow navigation. Custom profile JSON is
+available through Edit profile JSON after selecting a custom profile.
+
+If an update leaves an old process running without root, Overview shows Enable
+Root Access. Changing autostart also handles a root-required reply automatically:
+the app asks Homebrew Channel to elevate only its own service, restarts that
+service, verifies UID 0, and retries the switch. Root and boot-hook failures have
+separate messages. The explicit launch action `{"action":"repairRoot"}` invokes
+the same visible repair flow. Homebrew Channel must be installed and permit the
+request; denied elevation is reported without changing autostart.

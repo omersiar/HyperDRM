@@ -99,3 +99,40 @@ A separate nonblocking authenticated receiver probe refreshes the LED mapping ev
 The app automatically detected OLED65G42LW.DEUQLJP and selected the measured G4 profile. A live switch to Average produced one unique output color across four HyperHDR LED-stream samples; switching back to G4 produced 80-97 unique colors. Auto and the original receiver/handover preferences were restored afterward. Custom profiles validate 2-16 sorted rim positions, bounded region indices and model identifiers, persist privately, and are selected automatically only for the exact imported model identifier. No measured spatial profile for other hardware is claimed. Native tests passed profile parsing/persistence, model selection and average fallback. The synthetic-image test verifies geometry cache replacement after a custom-profile change.
 
 The receiver UI and remote-navigation tests passed, including custom JSON input and profile controls. Diagnosis export was deliberately excluded from this release. Cold boot and other TV models remain unverified.
+
+## Color continuity, calibration wizard and TV navigation (0.11.0)
+
+Empty histogram populations and failed reads are distinguished from populated
+black frames. A bounded 1.5-second hold expires into capture recovery; valid dark
+frames bypass the 500 ms recovery blend without altering their RGB values. ARM
+tests verify hold timing, black populations, recovery mixing and near-black codec
+rounding. An independent nonblocking raw receiver LED subscription accepts old
+result and current data envelopes, authenticates when required, handles fragmented
+messages, validates array values/counts and rebuilds mappings on layout/profile
+changes. Source bridge tests cover both directions, fresh-sample gating, midpoint
+and completion, genuine black, stale samples, timeout, connection setup and Stop.
+
+The bundled reproducible H.264 calibration video measures 32 edge positions.
+PicCap handover and bar detection are suppressed only for the bounded calibration
+session. The wizard starts the video plane before waiting for capture, requires
+fresh samples, rejects global/multimodal responses and selects the most localized
+anchor when nested regions overlap. The live G4 run produced ten sorted anchors
+covering all four edges and preserved the saved Auto/G4 profile. One source
+revocation recovered in 252 ms. Other TV hardware remains unverified; candidates
+require user review/save and four-corner validation. Failed measurements and
+cancellation preserve the saved profile.
+
+Overview, Receiver and Calibration are separate sections. Start Auto Calibration
+is directly visible in Calibration and linked from Overview. Focusable field
+frames keep native inputs unfocused during highlighting; OK/click explicitly
+starts keyboard editing. The documented keyboardStateChange event and Back
+restore frame navigation. Tests cover section selection, hidden/disabled controls,
+input focus only after activation, keyboard dismissal, wizard scope and rejection,
+proposal versus saved state, JSON validation and root-repair retries/denials.
+
+The root repair targets only org.webosbrew.histogramhyperion.service via Homebrew
+Channel and restarts only this service. The TV's current root process and boot
+symlink were verified. Actual autostart disable/enable requests succeeded, with
+Autostart restored to On. No receiver color correction, WLED configuration or
+PicCap autostart setting was changed. A local browser preview was unavailable
+because the browser policy rejected file URLs; no alternate browser path was used.

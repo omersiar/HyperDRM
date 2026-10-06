@@ -12,7 +12,7 @@ static uint64_t clock_ms=10000;
 static unsigned stopped,called,canceled;
 static char last_uri[128],last_data[256];
 static uint64_t milliseconds(void){return clock_ms;}
-static void stop_capture(void){stopped++;}
+static void release_capture(bool clear){(void)clear;stopped++;}
 static const char *payload(void *m){return m;}
 static void error_init(LSError *e){(void)e;}
 static void error_free(LSError *e){(void)e;}

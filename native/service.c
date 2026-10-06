@@ -27,6 +27,7 @@
 #include "target.h"
 #include "spatial_image.h"
 #include "diagnostics.h"
+#include "continuity.h"
 #define SERVICE "org.webosbrew.histogramhyperion.service"
 #define PRIORITY 149
 typedef struct {int code;char *message;const char *file;int line;const char *func;void *padding;unsigned long magic;} LSError;
@@ -60,6 +61,10 @@ static unsigned letterbox_mode,settling;
 static int pending_letterbox=-1;
 static uint64_t candidate_since,next_border_probe;
 static bool color_valid;
+static Continuity continuity;
+static uint64_t sample_at,calibration_until;
+static unsigned sample_sequence;
+#define CALIBRATION_ACTIVE (calibration_until>milliseconds())
 static unsigned led_count;
 static LedBlend *led_blends;
 static bool interpolation_enabled;
@@ -108,6 +113,12 @@ static int send_line(const char *line){
  while(left){ssize_t n=send(output,p,left,MSG_NOSIGNAL);if(n<=0)return -1;p+=n;left-=n;}
  return 0;
 }
+static bool receiver_ack(void){
+ char answer[4096];size_t used=0;bool complete=false;
+ while(used+1<sizeof(answer)){ssize_t n=recv(output,answer+used,sizeof(answer)-used-1,0);if(n<=0)break;used+=(size_t)n;answer[used]=0;if(strchr(answer,'\n')){complete=true;break;}}
+ PlaybackJson json={0};if(!complete || !playback_json_init(&json))return false;
+ void *root=json.parse(answer);bool ok=playback_true(&json,root,"success");if(root)json.put(root);dlclose(json.lib);return ok;
+}
 static bool read_layout(void){
  const size_t capacity=2*1024*1024;char *data=malloc(capacity+1);if(!data)return false;
  bool complete=false;size_t used=0;
@@ -141,6 +152,34 @@ static void stop_capture(void){release_capture(true);}
 static bool respond(void *h,void *m,const char *s){if(!h||!m)return true;LSError e;error_init(&e);bool ok=reply(h,m,s,&e);error_free(&e);return ok;}
 #include "handover.h"
 #include "layout_refresh.h"
+#define RECEIVER_LAYOUT_REVISION layout_updates
+#include "receiver_stream.h"
+#include "source_bridge.h"
+static bool calibration_session(void *h,void *m,void *ctx){
+ (void)ctx;const char *p=payload(m);
+ if(!strcmp(p,"{\"enabled\":true}")){
+  calibration_until=milliseconds()+110000;
+  if(capture && vt_preset(capture,0)!=0){calibration_until=0;return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Cannot select full-screen calibration capture\"}");}
+  capture_preset=letterbox_mode=0;settling=2;pending_letterbox=-1;
+ }else if(!strcmp(p,"{\"enabled\":false}"))calibration_until=0;
+ else return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Expected enabled boolean\"}");
+ return respond(h,m,"{\"returnValue\":true}");
+}
+static Calibration calibration_draft;
+static char calibration_message[256];
+static bool report_calibration(void *h,void *m,void *ctx){
+ if(!playback_json.lib)return respond(h,m,"{\"returnValue\":false,\"errorText\":\"JSON-C is unavailable\"}");
+ (void)ctx;void *root=playback_json.parse(payload(m)),*message=playback_field(&playback_json,root,"message");
+ bool valid=message && playback_json.type(message)==6 && strlen(playback_json.string(message))<sizeof(calibration_message);
+ if(valid)snprintf(calibration_message,sizeof(calibration_message),"%s",playback_json.string(message));
+ if(root)playback_json.put(root);
+ return respond(h,m,valid?"{\"returnValue\":true}":"{\"returnValue\":false,\"errorText\":\"Invalid calibration result message\"}");
+}
+static bool draft_calibration(void *h,void *m,void *ctx){
+ (void)ctx;Calibration next={0};
+ if(!playback_json.lib || !calibration_parse(&playback_json,payload(m),&next) || next.kind!=CAL_CUSTOM || next.count<4 || strcmp(next.model,tv_model))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Invalid measured model profile\"}");
+ calibration_draft=next;return respond(h,m,"{\"returnValue\":true}");
+}
 static bool model_busy;
 static unsigned long model_token;
 static uint64_t model_deadline,next_model_probe;
@@ -192,16 +231,30 @@ static bool start(void *h,void *m,void *ctx){
  if(recovery_started){last_recovery_ms=milliseconds()-recovery_started;recovery_started=0;}
  return respond(h,m,"{\"returnValue\":true,\"running\":true}");
 }
-static bool stop(void *h,void *m,void *ctx){(void)ctx;retry_pause(&retries);stop_capture();return respond(h,m,"{\"returnValue\":true,\"running\":false}");}
+static bool stop(void *h,void *m,void *ctx){
+ (void)ctx;calibration_until=0;retry_pause(&retries);
+ bool bridging=bridge_phase!=0;stream_close(milliseconds());bridge_phase=0;
+ memset(&continuity,0,sizeof(continuity));stop_capture();
+ if(bridging){
+  output=target_connect(&target);
+  if(output>=0){if(target_login())send_line("{\"command\":\"clear\",\"priority\":149}\n");close(output);output=-1;}
+ }
+ return respond(h,m,"{\"returnValue\":true,\"running\":false}");
+}
 static bool autostart(void *h,void *m,void *ctx){
  (void)ctx;const char *p=m?payload(m):NULL;bool enabled;
  if(p && strcmp(p,"{\"enabled\":true}")==0)enabled=true;
  else if(p && strcmp(p,"{\"enabled\":false}")==0)enabled=false;
  else return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Expected enabled boolean\"}");
- if(geteuid()!=0 || !set_boot(enabled))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Autostart could not be saved. Check own service root elevation and boot hook.\"}");
+ if(geteuid()!=0)return respond(h,m,"{\"returnValue\":false,\"rootRequired\":true,\"errorText\":\"Root access is required to change autostart. Select Enable Root Access in Overview.\"}");
+ if(!set_boot(enabled))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Cannot update the HyperDRM boot hook. Check the installed boot script and whether another file occupies the hook path.\"}");
  if(enabled)retry_reset(&retries);
  retry_update(&retries,enabled,capture!=NULL,milliseconds());
  return respond(h,m,enabled?"{\"returnValue\":true,\"autostart\":true}":"{\"returnValue\":true,\"autostart\":false}");
+}
+static bool restart_service(void *h,void *m,void *ctx){
+ (void)ctx;if(strcmp(payload(m),"{}"))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Restart expects an empty object\"}");
+ bool ok=respond(h,m,"{\"returnValue\":true,\"restarting\":true}");quitting=1;return ok;
 }
 static bool handover(void *h,void *m,void *ctx){
  (void)ctx;const char *p=payload(m);bool enabled;
@@ -219,7 +272,7 @@ static bool settings(void *h,void *m,void *ctx){
  if(!playback_json.lib || !target_parse(&playback_json,payload(m),&next))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Enter a valid IPv4/IPv6 address, integer port (1-65535), receiver and optional API token\"}");
  if(!target_save(TARGET_PREF,&next))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Could not save receiver settings\"}");
  bool active=capture || piccap_owned || retries.due;
- stop_capture();test_close();connection_test.stage=TEST_IDLE;target=next;last_error[0]=0;protection=PLAYBACK_UNKNOWN;clear_samples=0;clear_since=unknown_since=0;
+ stop_capture();stream_close(milliseconds());bridge_phase=0;memset(&continuity,0,sizeof(continuity));test_close();connection_test.stage=TEST_IDLE;target=next;last_error[0]=0;protection=PLAYBACK_UNKNOWN;clear_samples=0;clear_since=unknown_since=0;
  if(active && !retries.paused && !retries.blocked)retries.due=milliseconds();
  return respond(h,m,"{\"returnValue\":true}");
 }
@@ -230,15 +283,21 @@ static bool test_connection(void *h,void *m,void *ctx){
  return respond(h,m,"{\"returnValue\":true,\"testing\":true}");
 }
 static bool status(void *h,void *m,void *ctx){
- (void)ctx;char json[4096],safe[512],endpoint[80];size_t n=0;
+ (void)ctx;char json[8192],safe[512],endpoint[80];size_t n=0;
  snprintf(endpoint,sizeof(endpoint),strchr(target.host,':')?"[%s]:%u":"%s:%u",target.host,target.port);
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
  uint64_t now=milliseconds();
+ char report[512];size_t k=0;for(size_t i=0;calibration_message[i] && k+2<sizeof(report);i++){char c=calibration_message[i];if(c=='"'||c=='\\')report[k++]='\\';if((unsigned char)c>=32)report[k++]=c;}report[k]=0;
  int used=snprintf(json,sizeof(json),"{\"calibrationProfile\":\"%s\",\"effectiveCalibration\":\"%s\",\"tvModel\":\"%s\",\"customModel\":\"%s\",\"customPoints\":[",calibration_key(calibration.kind),calibration_key(calibration_effective()),tv_model,calibration.model);
  for(unsigned i=0;i<calibration.count;i++)used+=snprintf(json+used,sizeof(json)-used,"%s{\"position\":%.12g,\"region\":%u}",i?",":"",calibration.points[i].position,calibration.points[i].region);
  used+=snprintf(json+used,sizeof(json)-used,"],\"layoutUpdates\":%u,\"lastLayoutCheckAgeMs\":%lld,\"layoutError\":\"%s\",\"piccapFallbacks\":%u,\"piccapCooldownMs\":%llu,",layout_updates,last_layout_check?(long long)(now-last_layout_check):-1,layout_error,piccap_fallbacks,(unsigned long long)(handover_cooldown>now?handover_cooldown-now:0));
+ used+=snprintf(json+used,sizeof(json)-used,"\"calibrationMessage\":\"%s\",",report);
+ used+=snprintf(json+used,sizeof(json)-used,"\"calibrationDraft\":{\"model\":\"%s\",\"points\":[",calibration_draft.model);
+ for(unsigned i=0;i<calibration_draft.count;i++)used+=snprintf(json+used,sizeof(json)-used,"%s{\"position\":%.12g,\"region\":%u}",i?",":"",calibration_draft.points[i].position,calibration_draft.points[i].region);
+ used+=snprintf(json+used,sizeof(json)-used,"]},\"receiverStreamConnected\":%s,",stream.stage==4?"true":"false");
+ used+=snprintf(json+used,sizeof(json)-used,"\"sampleSequence\":%u,\"sampleAgeMs\":%lld,\"holdingColors\":%s,\"sourceFade\":%s,\"calibrating\":%s,",sample_sequence,sample_at?(long long)(now-sample_at):-1,continuity.holding?"true":"false",(continuity.fading || bridge_phase==3)?"true":"false",CALIBRATION_ACTIVE?"true":"false");
  used+=snprintf(json+used,sizeof(json)-used,"\"returnValue\":true,\"piccapPort\":%u,\"connectionTest\":{\"state\":\"%s\",\"ledCount\":%u,\"elapsedMs\":%llu,\"error\":\"%s\"},\"lastOutputAgeMs\":%lld,\"retryInMs\":%llu,\"captureState\":\"%s\",\"piccapError\":\"%s\",",target.piccap_port,test_stage_name(),connection_test.leds,(unsigned long long)connection_test.elapsed,connection_test.error,last_output_at?(long long)(now-last_output_at):-1,(unsigned long long)(retries.due>now?retries.due-now:0),capture_source==SOURCE_PICCAP_STARTING?"Starting PicCap":capture_source==SOURCE_PICCAP_STOPPING?"Stopping PicCap":piccap_owned?"PicCap":capture?"Histogram":"Stopped",piccap_error);
- used+=snprintf(json+used,sizeof(json)-used,"\"version\":\"0.10.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"%s\",\"host\":\"%s\",\"port\":%u,\"receiver\":\"%s\",\"tokenSet\":%s,\"piccapTargetCompatible\":%s,\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,endpoint,target.host,target.port,target.receiver,target.token[0]?"true":"false",target_piccap_compatible(&target)?"true":"false",PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ used+=snprintf(json+used,sizeof(json)-used,"\"version\":\"0.11.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"%s\",\"host\":\"%s\",\"port\":%u,\"receiver\":\"%s\",\"tokenSet\":%s,\"piccapTargetCompatible\":%s,\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,endpoint,target.host,target.port,target.receiver,target.token[0]?"true":"false",target_piccap_compatible(&target)?"true":"false",PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);
@@ -248,7 +307,9 @@ static int tick(void *unused){
  (void)unused;
  uint64_t now=milliseconds();
  model_tick(now);test_tick(&playback_json,now);layout_refresh_tick(&playback_json,now,capture || capture_source==SOURCE_PICCAP);
- if(handover_tick())return 1;
+ stream_tick(&playback_json,now,handover_enabled && !retries.paused && !retries.blocked);
+ bool owned=handover_tick();bridge_tick(now);
+ if(owned)return 1;
  if(!capture){
   retry_update(&retries,boot_enabled() && geteuid()==0,false,milliseconds());
   if(retry_take(&retries,milliseconds())){
@@ -259,12 +320,22 @@ static int tick(void *unused){
  }
  if(revoked){set_error("LG revoked capture; recovering after source transition");capture_recoveries++;recovery_started=milliseconds();release_capture(false);retry_source_transition(&retries,milliseconds());return 1;}
  if(settling){settling--;return 1;}
- if(letterbox_mode && capture_preset==1 && milliseconds()>=next_border_probe){
+ if(!CALIBRATION_ACTIVE && letterbox_mode && capture_preset==1 && milliseconds()>=next_border_probe){
   if(vt_preset(capture,0)!=0){set_error("Border probe preset failed");stop_capture();return 1;}
   capture_preset=0;settling=2;return 1;
  }
  Histogram hist[16]={0};int rc=vt_get(capture,hist);
- if(rc){set_error("LG histogram read failed; streaming stopped");stop_capture();return 1;}
+ bool populated=!rc && histogram_populated(hist);
+ if(!populated){
+  unsigned char held[16][3];
+  color_valid=false;
+  if(!continuity_frame(&continuity,false,rgb,now,held)){set_error("Histogram data unavailable beyond hold window; recovering capture");release_capture(false);retry_source_transition(&retries,now);return 1;}
+  char *line=region_command(held,led_blends,led_count,(unsigned)(1500-(now-continuity.missing_at)));
+  if(!line || send_line(line)){free(line);set_error("Receiver connection lost while holding colors");stop_capture();return 1;}free(line);
+  if(!receiver_ack()){set_error("Receiver did not acknowledge held colors");stop_capture();return 1;}
+  last_output_at=now;return 1;
+ }
+ sample_at=now;sample_sequence++;
  unsigned aggregate[3]={0};
  for(int i=0;i<16;i++){
   black_percent[i]=100;
@@ -278,7 +349,7 @@ static int tick(void *unused){
  for(int i=0;i<16;i++)for(int c=0;c<3;c++){
   rgb[i][c]=histogram_mean(hist[i].bins[c]);aggregate[c]+=rgb[i][c];
  }
- if(capture_preset==0){
+ if(!CALIBRATION_ACTIVE && capture_preset==0){
   int candidate=letterbox_candidate(black_percent,rgb);uint64_t now=milliseconds();
   if(candidate<0)pending_letterbox=-1;
   else if(candidate!=pending_letterbox){pending_letterbox=candidate;candidate_since=now;}
@@ -290,26 +361,15 @@ static int tick(void *unused){
  }
  for(int c=0;c<3;c++)sent_rgb[c]=(unsigned char)(aggregate[c]/16);
  unsigned char boosted_mean[3];boost_color(sent_rgb,boosted_mean);memcpy(sent_rgb,boosted_mean,3);
- unsigned char mapped_rgb[16][3];calibration_colors(rgb,mapped_rgb);
+ unsigned char mapped_rgb[16][3],stable_rgb[16][3];calibration_colors(rgb,mapped_rgb);
+ continuity_frame(&continuity,true,mapped_rgb,now,stable_rgb);
  interpolation_enabled=led_count && calibration_effective()!=CAL_AVERAGE;
- bool image_output=strcmp(target.receiver,"HyperHDR")==0;
- size_t capacity=256+(size_t)led_count*12;char *line=image_output?spatial_image_command(mapped_rgb,PRIORITY):malloc(capacity);
+ char *line=region_command(stable_rgb,led_blends,led_count,1500);
  if(!line){set_error("Color buffer allocation failed");stop_capture();return 1;}
- if(!image_output){
- size_t written=(size_t)snprintf(line,capacity,"{\"command\":\"color\",\"priority\":%d,\"duration\":1500,\"origin\":\"HyperDRM\",\"color\":[",PRIORITY);
- for(unsigned i=0;i<led_count;i++){
-  unsigned char interpolated[3],boosted[3];LedBlend blend=led_blends[i];
-  blend_color(mapped_rgb[blend.a],mapped_rgb[blend.b],blend.weight,interpolated);boost_color(interpolated,boosted);
-  written+=(size_t)snprintf(line+written,capacity-written,"%s%u,%u,%u",i?",":"",boosted[0],boosted[1],boosted[2]);
- }
- snprintf(line+written,capacity-written,"]}\n");
- }
  int failed=send_line(line);free(line);
  if(failed){set_error("Receiver connection lost");stop_capture();return 1;}
- char answer[4096];size_t used=0;bool complete=false;
- while(used+1<sizeof(answer)){ssize_t len=recv(output,answer+used,sizeof(answer)-used-1,0);if(len<=0)break;used+=(size_t)len;answer[used]=0;if(strchr(answer,'\n')){complete=true;break;}}
- if(!complete){set_error("Receiver did not acknowledge color data");stop_capture();return 1;}
- if(!strstr(answer,"\"success\":true")&&!strstr(answer,"\"success\": true")){set_error("Receiver rejected the color command");stop_capture();return 1;}
+ if(!receiver_ack()){set_error("Receiver did not acknowledge color data");stop_capture();return 1;}
+ last_error[0]=0;
  color_valid=true;last_output_at=milliseconds();frames++;return 1;
 }
 static void *symbol(void *lib,const char *name){void *s=dlsym(lib,name);if(!s){fprintf(stderr,"Missing symbol %s\n",name);exit(2);}return s;}
@@ -332,13 +392,13 @@ int main(void){
  unsigned (*timer)(unsigned,int(*)(void*),void*)=symbol(glib,"g_timeout_add");
  void (*loop_unref)(void*)=symbol(glib,"g_main_loop_unref");
  void *handle=NULL,*loop=loop_new(NULL,0);LSError e;error_init(&e);
- Method methods[]={{"start",start,0},{"stop",stop,0},{"status",status,0},{"autostart",autostart,0},{"handover",handover,0},{"settings",settings,0},{"testConnection",test_connection,0},{"calibration",set_calibration,0},{NULL,NULL,0}};
+ Method methods[]={{"start",start,0},{"stop",stop,0},{"status",status,0},{"autostart",autostart,0},{"restartService",restart_service,0},{"handover",handover,0},{"settings",settings,0},{"testConnection",test_connection,0},{"calibration",set_calibration,0},{"calibrationSession",calibration_session,0},{"calibrationDraft",draft_calibration,0},{"calibrationResult",report_calibration,0},{NULL,NULL,0}};
  if(!reg(SERVICE,&handle,&e)||!category(handle,"/",methods,NULL,NULL,&e)||!attach(handle,loop,&e)){fprintf(stderr,"Luna registration failed: %s\n",e.message?e.message:"unknown");error_free(&e);return 3;}
  service_handle=handle;
  if(!boot_enabled())retry_pause(&retries);
  timer(100,tick,NULL);
  while(!quitting){iterate(NULL,0);usleep(10000);}
- test_close();stop_capture();
+ stream_close(milliseconds());test_close();stop_capture();
  if(piccap_owned){
   handover_enabled=false;retry_pause(&retries);
   uint64_t deadline=milliseconds()+4000;

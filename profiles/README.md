@@ -33,3 +33,13 @@ SoC or firmware; document that test context with contributed profiles.
 Profiles only control spatial region assignment. Saturation, brightness and
 smoothing remain receiver settings. Runtime selection invalidates the generated
 HyperHDR geometry and refreshes the Hyperion LED mapping without capture restart.
+
+## Guided measurement
+
+The app's auto calibration uses an actual local video plane, not UI overlays.
+It collects a black reference and fresh samples from 32 perimeter patches,
+rejects global responses, and derives sorted positions from each region's local
+response peak. A candidate must cover all four edges. The resulting JSON is a
+proposal until Save profile is selected. Use Validate profile after saving and
+check all four color quadrants before contributing the profile. Cancellation and
+failed measurement preserve the saved profile.

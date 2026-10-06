@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('assert'),fs=require('fs'),vm=require('vm');
-const ids=['host','port','piccapPort','receiver','token','clearToken','endpoint','handover','autostart','error','status','regions','start','stop','refresh','saveTarget','testConnection','testResult','diagnostics','profile','customEditor','customProfile','saveProfile','profileStatus'];
+const ids=['host','port','piccapPort','receiver','token','clearToken','endpoint','handover','autostart','error','status','regions','start','stop','refresh','saveTarget','testConnection','testResult','diagnostics','profile','customEditor','customProfile','saveProfile','profileStatus','calibrate','validateCalibration','cancelCalibration','editProfile','customProfileField','overviewTab','receiverTab','calibrationTab','calibrationShortcut','hostField','portField','piccapPortField','tokenField','grantRoot','rootHint'];
 const elements={};
 ids.forEach(id=>elements[id]={value:'',textContent:'',disabled:false,checked:false,attributes:{},style:{},addEventListener(){},focus(){},appendChild(){},setAttribute(k,v){this.attributes[k]=v;},getAttribute(k){return this.attributes[k];}});
 const requests=[];
@@ -14,7 +14,7 @@ const context={PalmServiceBridge:Bridge,document:{getElementById:id=>elements[id
 vm.runInNewContext(fs.readFileSync('app/app.js','utf8'),context);
 assert(elements.testResult.textContent.includes('120 LEDs'));
 assert(elements.diagnostics.textContent.includes('Root service'));
-assert(controls.includes(elements.piccapPort)&&controls.includes(elements.testConnection));
+assert(controls.includes(elements.piccapPortField)&&controls.includes(elements.testConnection));
 context.targetDirty=true;elements.testConnection.onclick();assert(elements.error.textContent.includes('Save receiver'));
 elements.piccapPort.value='0';elements.saveTarget.onclick();assert(elements.error.textContent.includes('FlatBuffer port'));
 elements.piccapPort.value='19446';elements.host.value='10.1.0.100';elements.token.value='';elements.saveTarget.onclick();
