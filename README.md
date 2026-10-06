@@ -21,11 +21,11 @@ DRM playback color output was confirmed on the test TV. Support depends on LG's 
 
 The 16 histogram samples are independent measurements; interpolation produces smoother transitions without adding independently captured detail. Sample positions are approximate G4 calibration values. Top/bottom bar detection is supported; side bars, arbitrary bar thickness and HDR color calibration remain limited.
 
-Only the own service is modified. No Hue, LG library, driver or firmware binaries are included. For histogram initialization, the service temporarily creates LG's developer marker and uses a guardian process to remove its own marker afterward; an existing marker is preserved.
+Only the own service is modified. Optional Auto PicCap can start and stop the installed PicCap service through its existing API. No Hue, LG library, driver or firmware binaries are included. For histogram initialization, the service temporarily creates LG's developer marker and uses a guardian process to remove its own marker afterward; an existing marker is preserved.
 
 ## Installation
 
-The current package is [HyperDRM_0.6.4_arm.ipk](HyperDRM_0.6.4_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.7.0_arm.ipk](HyperDRM_0.7.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -85,3 +85,13 @@ The logo master is `app/logo.png`, with 80 px and 130 px installation icons.
 See [the publishing review](docs/publishing-review.md) for the requirements audit and unresolved submission conditions. This repository is not a claim that webOSbrew has approved the app.
 
 Remote navigation regression tests: `node tests/remote-navigation.test.js`.
+
+## Optional automatic PicCap handover
+
+Version 0.7.0 adds **Auto PicCap**, disabled by default. The switch is available when PicCap is installed. Keep PicCap's own autostart disabled and configure its output for your Hyperion instance. HyperDRM does not change PicCap's configuration or autostart preference.
+
+When the session is started, the controller polls LG's active media resources. Two consecutive foreground media-decoder samples without a Secure Video Path resource allow PicCap to start. HyperDRM releases its histogram capture and clears priority 149 first, allowing PicCap's configured input priority to take over. Any `SVP_CPB` resource selects protected playback; missing, stale, malformed, idle or HDMI state selects the conservative HyperDRM fallback. PicCap must confirm that it has stopped before histogram capture resumes. Detection is specific to the tested G4 resource model, not a universal DRM-state API.
+
+The switch is saved in the own service container and applies after reboot when Autostart is enabled. Stop pauses both managed capture paths until Start. Turning Auto PicCap off stops a PicCap session started by this controller and restores HyperDRM. Avoid starting another capture service independently while automatic handover is active.
+
+The app displays the selected source and PicCap's Hyperion connection status. Histogram region swatches are hidden while PicCap supplies the colors. Playback classification and isolated controller tests are in `native/test_playback.c` and `native/test_handover.c`; link both with `-ldl`.

@@ -118,6 +118,7 @@ static void stop_capture(void){
  if(capture){vt_finish(capture);capture=NULL;}
 }
 static bool respond(void *h,void *m,const char *s){if(!h||!m)return true;LSError e;error_init(&e);bool ok=reply(h,m,s,&e);error_free(&e);return ok;}
+#include "handover.h"
 static bool start_failure(void *h,void *m,const char *message){
  retry_update(&retries,boot_enabled() && geteuid()==0,false,milliseconds());
  char json[512];snprintf(json,sizeof(json),"{\"returnValue\":false,\"errorText\":\"%s\",\"retryScheduled\":%s,\"retryBlocked\":%s}",message,retries.due?"true":"false",retries.blocked?"true":"false");
@@ -127,6 +128,7 @@ static bool start(void *h,void *m,void *ctx){
  (void)ctx;const char *p=m?payload(m):NULL;
  if(p && strcmp(p,"{}")!=0)return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Start expects an empty object; endpoint is localhost:19444\"}");
  if(m)retry_reset(&retries);
+ if(piccap_owned)return respond(h,m,"{\"returnValue\":true,\"running\":true,\"activeSource\":\"PicCap\"}");
  if(capture)return respond(h,m,"{\"returnValue\":true,\"running\":true}");
  frames=0;revoked=0;last_error[0]=0;lg_diagnostic[0]=0;
  output=socket(AF_INET,SOCK_STREAM,0);
@@ -155,17 +157,29 @@ static bool autostart(void *h,void *m,void *ctx){
  retry_update(&retries,enabled,capture!=NULL,milliseconds());
  return respond(h,m,enabled?"{\"returnValue\":true,\"autostart\":true}":"{\"returnValue\":true,\"autostart\":false}");
 }
+static bool handover(void *h,void *m,void *ctx){
+ (void)ctx;const char *p=payload(m);bool enabled;
+ if(strcmp(p,"{\"enabled\":true}")==0)enabled=true;
+ else if(strcmp(p,"{\"enabled\":false}")==0)enabled=false;
+ else return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Expected enabled boolean\"}");
+ if(!playback_json.lib || geteuid()!=0)return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Root service and JSON-C are required\"}");
+ if(enabled && !piccap_installed())return respond(h,m,"{\"returnValue\":false,\"errorText\":\"PicCap is not installed\"}");
+ if(!handover_save(enabled))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Could not save PicCap handover preference\"}");
+ handover_enabled=enabled;protection=PLAYBACK_UNKNOWN;clear_samples=0;next_media_probe=0;
+ return respond(h,m,"{\"returnValue\":true}");
+}
 static bool status(void *h,void *m,void *ctx){
  (void)ctx;char json[4096],safe[512];size_t n=0;
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
- int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.6.4\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",capture?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.7.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);
- snprintf(json+used,sizeof(json)-used,"],\"preset\":%u,\"saturationGain\":2.0,\"brightnessGain\":1.33,\"spatialInterpolation\":%s,\"blackBarDetection\":true,\"autostart\":%s,\"retryScheduled\":%s,\"retryPaused\":%s,\"retryBlocked\":%s,\"retryAttempts\":%u,\"letterboxDetected\":%s}",capture_preset,interpolation_enabled?"true":"false",boot_enabled()?"true":"false",retries.due?"true":"false",retries.paused?"true":"false",retries.blocked?"true":"false",retries.attempts,capture&&letterbox_mode?"true":"false");return respond(h,m,json);
+ snprintf(json+used,sizeof(json)-used,"],\"preset\":%u,\"saturationGain\":2.0,\"brightnessGain\":1.33,\"spatialInterpolation\":%s,\"blackBarDetection\":true,\"autostart\":%s,\"retryScheduled\":%s,\"retryPaused\":%s,\"retryBlocked\":%s,\"retryAttempts\":%u,\"piccapInstalled\":%s,\"piccapHandover\":%s,\"piccapConnected\":%s,\"activeSource\":\"%s\",\"playbackProtection\":\"%s\",\"letterboxDetected\":%s}",capture_preset,interpolation_enabled?"true":"false",boot_enabled()?"true":"false",retries.due?"true":"false",retries.paused?"true":"false",retries.blocked?"true":"false",retries.attempts,piccap_installed()?"true":"false",handover_enabled?"true":"false",piccap_connected?"true":"false",piccap_owned?"PicCap":"HyperDRM",protection==PLAYBACK_PROTECTED?"protected":protection==PLAYBACK_CLEAR?"non-secure decoder":"unknown",capture&&letterbox_mode?"true":"false");return respond(h,m,json);
 }
 static int tick(void *unused){
  (void)unused;
+ if(handover_tick())return 1;
  if(!capture){
   retry_update(&retries,boot_enabled() && geteuid()==0,false,milliseconds());
   if(retry_take(&retries,milliseconds())){
@@ -231,6 +245,9 @@ int main(void){
  void *vt=dlopen("libvtcapture.so.1",RTLD_NOW),*ls=dlopen("libluna-service2.so.3",RTLD_NOW),*glib=dlopen("libglib-2.0.so.0",RTLD_NOW);
  if(!vt||!ls||!glib){fprintf(stderr,"Missing LG library: %s\n",dlerror());return 2;}
  vt_init=symbol(vt,"vtCapture_initHistogram");vt_preset=symbol(vt,"vtCapture_setPresetHistogram");vt_get=symbol(vt,"vtCapture_getHistogram");vt_finish=symbol(vt,"vtCapture_finalizeHistogram");
+ call_once=symbol(ls,"LSCallOneReply");
+ cancel_call=symbol(ls,"LSCallCancel");
+ if(playback_json_init(&playback_json))handover_load();
  reply=symbol(ls,"LSMessageReply");payload=symbol(ls,"LSMessageGetPayload");error_init=symbol(ls,"LSErrorInit");error_free=symbol(ls,"LSErrorFree");
  bool (*reg)(const char*,void**,LSError*)=symbol(ls,"LSRegister");
  bool (*category)(void*,const char*,Method*,void*,void*,LSError*)=symbol(ls,"LSRegisterCategory");
@@ -241,9 +258,17 @@ int main(void){
  unsigned (*timer)(unsigned,int(*)(void*),void*)=symbol(glib,"g_timeout_add");
  void (*loop_unref)(void*)=symbol(glib,"g_main_loop_unref");
  void *handle=NULL,*loop=loop_new(NULL,0);LSError e;error_init(&e);
- Method methods[]={{"start",start,0},{"stop",stop,0},{"status",status,0},{"autostart",autostart,0},{NULL,NULL,0}};
+ Method methods[]={{"start",start,0},{"stop",stop,0},{"status",status,0},{"autostart",autostart,0},{"handover",handover,0},{NULL,NULL,0}};
  if(!reg(SERVICE,&handle,&e)||!category(handle,"/",methods,NULL,NULL,&e)||!attach(handle,loop,&e)){fprintf(stderr,"Luna registration failed: %s\n",e.message?e.message:"unknown");error_free(&e);return 3;}
+ service_handle=handle;
+ if(!boot_enabled())retry_pause(&retries);
  timer(100,tick,NULL);
  while(!quitting){iterate(NULL,0);usleep(10000);}
- stop_capture();unreg(handle,&e);error_free(&e);loop_unref(loop);return 0;
+ stop_capture();
+ if(piccap_owned){
+  handover_enabled=false;retry_pause(&retries);
+  uint64_t deadline=milliseconds()+4000;
+  while(piccap_owned && milliseconds()<deadline){handover_tick();iterate(NULL,0);usleep(10000);}
+ }
+ unreg(handle,&e);error_free(&e);loop_unref(loop);return 0;
 }

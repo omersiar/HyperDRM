@@ -9,9 +9,17 @@ function call(method,done,data){
  bridge.call('luna://org.webosbrew.histogramhyperion.service/'+method,JSON.stringify(data||{}));
 }
 function display(result){
+ var handover=document.getElementById('handover');handover.disabled=!result.piccapInstalled;
+ handover.setAttribute('aria-checked',String(!!result.piccapHandover));
+ handover.textContent=result.piccapInstalled?'Auto PicCap: '+(result.piccapHandover?'On':'Off'):'Auto PicCap: Not installed';
  if(typeof result.autostart==='boolean'){var toggle=document.getElementById('autostart');toggle.setAttribute('aria-checked',String(result.autostart));toggle.textContent='Autostart: '+(result.autostart?'On':'Off');}
  document.getElementById('error').textContent=result.errorText||result.error||'';
  document.getElementById('status').textContent=result.returnValue===false?'Service unavailable':(result.running?'Running':'Stopped')+' · '+(result.frames||0)+' acknowledged color updates';
+ if(result.activeSource==='PicCap'){
+  document.getElementById('status').textContent='PicCap · '+(result.running?'Running':'Switching capture source')+' · '+(result.piccapConnected?'Hyperion connected':'Waiting for Hyperion');
+  document.getElementById('regions').textContent='';return;
+ }
+ if(result.piccapHandover)document.getElementById('status').textContent+=' · HyperDRM · '+result.playbackProtection;
  if(result.colorValid)document.getElementById('status').textContent+=result.spatialOutput?' · '+result.ledCount+' LEDs from 16 color regions':' · Output RGB: '+result.outputColor.join(', ');
  else if(result.returnValue!==false)document.getElementById('status').textContent+=' · No current color output';
  if(result.blackBarDetection && result.running)document.getElementById('status').textContent+=result.letterboxDetected?' · Top/bottom black bars detected':' · Full-screen capture';
@@ -29,4 +37,5 @@ document.getElementById('start').focus();
 
 document.getElementById('autostart').onclick=function(){var button=this;var enabled=button.getAttribute('aria-checked')!=='true';button.disabled=true;call('autostart',function(r){button.disabled=false;if(r.returnValue===false)document.getElementById('error').textContent=r.errorText;else call('status',display);},{enabled:enabled});};
 
-setupRemoteNavigation(['start','stop','refresh','autostart'].map(function(id){return document.getElementById(id);}),document,window);
+document.getElementById('handover').onclick=function(){var button=this;button.disabled=true;call('handover',function(r){button.disabled=false;if(r.returnValue===false)document.getElementById('error').textContent=r.errorText;else call('status',display);},{enabled:button.getAttribute('aria-checked')!=='true'});};
+setupRemoteNavigation(['start','stop','refresh','autostart','handover'].map(function(id){return document.getElementById(id);}),document,window);

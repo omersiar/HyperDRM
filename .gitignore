@@ -25,3 +25,6 @@ service/led-interpolation.txt
 test-autostart
 
 test-retry
+
+test-playback
+test-handover
