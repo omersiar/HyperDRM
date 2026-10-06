@@ -11,6 +11,8 @@ function setupRemoteNavigation(buttons, doc, win) {
    event.key==='ArrowRight'||event.key==='ArrowDown'||code===39||code===40?1:0;
   var enter=event.key==='Enter'||code===13;
   if(!direction&&!enter)return;
+  var editing=doc.activeElement && doc.activeElement.tagName==='INPUT' && doc.activeElement.type!=='checkbox';
+  if(editing && (enter||code===37||code===39||event.key==='ArrowLeft'||event.key==='ArrowRight'))return;
   event.preventDefault();
   var enabled=buttons.filter(function(button){return !button.disabled;});
   if(!enabled.length)return;

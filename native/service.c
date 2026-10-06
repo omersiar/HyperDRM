@@ -24,6 +24,7 @@
 #include "layout.h"
 #include "autostart.h"
 #include "retry.h"
+#include "target.h"
 #define SERVICE "org.webosbrew.histogramhyperion.service"
 #define PRIORITY 149
 typedef struct {int code;char *message;const char *file;int line;const char *func;void *padding;unsigned long magic;} LSError;
@@ -113,6 +114,18 @@ static bool read_layout(void){
  }
  bool ok=complete && layout_from_json(data,&led_blends,&led_count);free(data);interpolation_enabled=ok;return ok;
 }
+static bool target_login(void){
+ if(!target.token[0])return true;
+ char request[384],answer[4096];size_t used=0;
+ snprintf(request,sizeof(request),"{\"command\":\"authorize\",\"subcommand\":\"login\",\"token\":\"%s\"}\n",target.token);
+ if(send_line(request)!=0)return false;
+ while(used+1<sizeof(answer)){
+  ssize_t n=recv(output,answer+used,sizeof(answer)-used-1,0);if(n<=0)return false;
+  used+=(size_t)n;answer[used]=0;if(strchr(answer,'\n'))break;
+ }
+ PlaybackJson json={0};if(!playback_json_init(&json))return false;
+ void *root=json.parse(answer);bool ok=playback_true(&json,root,"success");if(root)json.put(root);dlclose(json.lib);return ok;
+}
 static void release_capture(bool clear_output){
  free(led_blends);led_blends=NULL;led_count=0;interpolation_enabled=false;
  color_valid=false;memset(rgb,0,sizeof(rgb));memset(sent_rgb,0,sizeof(sent_rgb));
@@ -129,17 +142,15 @@ static bool start_failure(void *h,void *m,const char *message){
 }
 static bool start(void *h,void *m,void *ctx){
  (void)ctx;const char *p=m?payload(m):NULL;
- if(p && strcmp(p,"{}")!=0)return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Start expects an empty object; endpoint is localhost:19444\"}");
+ if(p && strcmp(p,"{}")!=0)return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Start expects an empty object; use settings to configure the receiver\"}");
  if(m)retry_reset(&retries);
  if(piccap_owned)return respond(h,m,"{\"returnValue\":true,\"running\":true,\"activeSource\":\"PicCap\"}");
  if(capture)return respond(h,m,"{\"returnValue\":true,\"running\":true}");
  frames=0;revoked=0;last_error[0]=0;lg_diagnostic[0]=0;
- output=socket(AF_INET,SOCK_STREAM,0);
- struct timeval timeout={1,0};
- if(output>=0){setsockopt(output,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));setsockopt(output,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));}
- struct sockaddr_in a={.sin_family=AF_INET,.sin_port=htons(19444),.sin_addr={htonl(INADDR_LOOPBACK)}};
- if(output<0||connect(output,(void*)&a,sizeof(a))!=0){stop_capture();set_error("Hyperion JSON server is unavailable on localhost:19444");return start_failure(h,m,"Cannot connect to local Hyperion");}
- if(!read_layout()){stop_capture();set_error("Cannot read a valid LED layout from Hyperion");return start_failure(h,m,"Cannot read Hyperion LED layout");}
+ output=target_connect(&target);
+ if(output<0){stop_capture();set_error("Cannot connect to configured receiver IP and JSON port");return start_failure(h,m,"Configured receiver is unavailable");}
+ if(!target_login()){stop_capture();set_error("Receiver token login failed; check the saved API token");return start_failure(h,m,"Receiver authentication failed");}
+ if(!read_layout()){stop_capture();set_error("Cannot read receiver LED layout; check JSON port and API authorization");return start_failure(h,m,"Receiver layout unavailable; check API authorization");}
  if(!enter_developer_mode()){stop_capture();set_error("Developer initialization needs root. Elevate this own service through Homebrew Channel.");return start_failure(h,m,"Root access is required for temporary LG developer initialization");}
  capture=vt_init(policy);
  if(!leave_developer_mode()){stop_capture();retries.blocked=true;set_error("Developer marker cleanup failed; manual intervention required");return start_failure(h,m,"Developer marker cleanup failed");}
@@ -172,10 +183,20 @@ static bool handover(void *h,void *m,void *ctx){
  handover_enabled=enabled;protection=PLAYBACK_UNKNOWN;clear_samples=0;next_media_probe=0;
  return respond(h,m,"{\"returnValue\":true}");
 }
+static bool settings(void *h,void *m,void *ctx){
+ (void)ctx;TargetConfig next=target;
+ if(!playback_json.lib || !target_parse(&playback_json,payload(m),&next))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Enter a valid IPv4/IPv6 address, integer port (1-65535), receiver and optional API token\"}");
+ if(!target_save(TARGET_PREF,&next))return respond(h,m,"{\"returnValue\":false,\"errorText\":\"Could not save receiver settings\"}");
+ bool active=capture || piccap_owned || retries.due;
+ stop_capture();target=next;last_error[0]=0;protection=PLAYBACK_UNKNOWN;clear_samples=0;
+ if(active && !retries.paused && !retries.blocked)retries.due=milliseconds();
+ return respond(h,m,"{\"returnValue\":true}");
+}
 static bool status(void *h,void *m,void *ctx){
- (void)ctx;char json[4096],safe[512];size_t n=0;
+ (void)ctx;char json[4096],safe[512],endpoint[80];size_t n=0;
+ snprintf(endpoint,sizeof(endpoint),strchr(target.host,':')?"[%s]:%u":"%s:%u",target.host,target.port);
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
- int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.7.2\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.8.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"%s\",\"host\":\"%s\",\"port\":%u,\"receiver\":\"%s\",\"tokenSet\":%s,\"piccapTargetCompatible\":%s,\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,endpoint,target.host,target.port,target.receiver,target.token[0]?"true":"false",target_piccap_local(&target)?"true":"false",PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);
@@ -235,11 +256,11 @@ static int tick(void *unused){
  }
  snprintf(line+written,capacity-written,"]}\n");
  int failed=send_line(line);free(line);
- if(failed){set_error("Hyperion connection lost");stop_capture();return 1;}
+ if(failed){set_error("Receiver connection lost");stop_capture();return 1;}
  char answer[4096];size_t used=0;bool complete=false;
  while(used+1<sizeof(answer)){ssize_t len=recv(output,answer+used,sizeof(answer)-used-1,0);if(len<=0)break;used+=(size_t)len;answer[used]=0;if(strchr(answer,'\n')){complete=true;break;}}
- if(!complete){set_error("Hyperion did not acknowledge color data");stop_capture();return 1;}
- if(!strstr(answer,"\"success\":true")&&!strstr(answer,"\"success\": true")){set_error("Hyperion rejected the color command");stop_capture();return 1;}
+ if(!complete){set_error("Receiver did not acknowledge color data");stop_capture();return 1;}
+ if(!strstr(answer,"\"success\":true")&&!strstr(answer,"\"success\": true")){set_error("Receiver rejected the color command");stop_capture();return 1;}
  color_valid=true;frames++;return 1;
 }
 static void *symbol(void *lib,const char *name){void *s=dlsym(lib,name);if(!s){fprintf(stderr,"Missing symbol %s\n",name);exit(2);}return s;}
@@ -251,7 +272,7 @@ int main(void){
  vt_init=symbol(vt,"vtCapture_initHistogram");vt_preset=symbol(vt,"vtCapture_setPresetHistogram");vt_get=symbol(vt,"vtCapture_getHistogram");vt_finish=symbol(vt,"vtCapture_finalizeHistogram");
  call_once=symbol(ls,"LSCallOneReply");
  cancel_call=symbol(ls,"LSCallCancel");
- if(playback_json_init(&playback_json))handover_load();
+ if(playback_json_init(&playback_json)){handover_load();target_load(&playback_json,TARGET_PREF,&target);}
  reply=symbol(ls,"LSMessageReply");payload=symbol(ls,"LSMessageGetPayload");error_init=symbol(ls,"LSErrorInit");error_free=symbol(ls,"LSErrorFree");
  bool (*reg)(const char*,void**,LSError*)=symbol(ls,"LSRegister");
  bool (*category)(void*,const char*,Method*,void*,void*,LSError*)=symbol(ls,"LSRegisterCategory");
@@ -262,7 +283,7 @@ int main(void){
  unsigned (*timer)(unsigned,int(*)(void*),void*)=symbol(glib,"g_timeout_add");
  void (*loop_unref)(void*)=symbol(glib,"g_main_loop_unref");
  void *handle=NULL,*loop=loop_new(NULL,0);LSError e;error_init(&e);
- Method methods[]={{"start",start,0},{"stop",stop,0},{"status",status,0},{"autostart",autostart,0},{"handover",handover,0},{NULL,NULL,0}};
+ Method methods[]={{"start",start,0},{"stop",stop,0},{"status",status,0},{"autostart",autostart,0},{"handover",handover,0},{"settings",settings,0},{NULL,NULL,0}};
  if(!reg(SERVICE,&handle,&e)||!category(handle,"/",methods,NULL,NULL,&e)||!attach(handle,loop,&e)){fprintf(stderr,"Luna registration failed: %s\n",e.message?e.message:"unknown");error_free(&e);return 3;}
  service_handle=handle;
  if(!boot_enabled())retry_pause(&retries);

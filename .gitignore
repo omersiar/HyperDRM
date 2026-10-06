@@ -28,3 +28,6 @@ test-retry
 
 test-playback
 test-handover
+
+test-target
+tests/receiver-proxy.log

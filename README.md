@@ -1,6 +1,6 @@
 # HyperDRM
 
-Ambient Light for webOS and Hyperion. An own webOS app and native ARM service that reads LG color histograms and sends spatial LED colors to a local Hyperion instance.
+Ambient Light for webOS, Hyperion and HyperHDR. An own webOS app and native ARM service that reads LG color histograms and sends spatial LED colors to a configurable Hyperion or HyperHDR receiver.
 
 ![HyperDRM logo](app/icon.png)
 
@@ -11,11 +11,11 @@ Ambient Light for webOS and Hyperion. An own webOS app and native ARM service th
 - Automatic detection of top/bottom black bars on the calibrated LG G4.
 - Original saturation and brightness (both gains 1.0).
 - Start, stop, status and persistent boot autostart switch in the TV app.
-- Local Hyperion JSON connection on `127.0.0.1:19444`, priority 149, up to 10 updates per second.
+- Configurable IPv4/IPv6 receiver and JSON TCP port, optional token authentication, priority 149, up to 10 updates per second.
 
 ## Requirements and limits
 
-Tested on a rooted LG G4 with webOS 24, Homebrew Channel and Hyperion 2.0.16 installed on the TV. The native service requires root elevation and the TV's existing `libvtcapture`, Luna, GLib and JSON-C libraries. Other TV models or firmware versions have not been validated.
+Tested on a rooted LG G4 with webOS 24, Homebrew Channel and Hyperion 2.0.16 and HyperHDR 22.0.0 tested on the TV. The native service requires root elevation and the TV's existing `libvtcapture`, Luna, GLib and JSON-C libraries. Other TV models or firmware versions have not been validated.
 
 DRM playback color output was confirmed on the test TV. Support depends on LG's capture implementation; this does not guarantee support on other devices or apps. HyperDRM transmits colors, not captured video frames. The video preview in Hyperion therefore does not show the TV picture.
 
@@ -25,7 +25,7 @@ Only the own service is modified. Optional Auto PicCap can start and stop the in
 
 ## Installation
 
-The current package is [HyperDRM_0.7.2_arm.ipk](HyperDRM_0.7.2_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.8.0_arm.ipk](HyperDRM_0.8.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -35,7 +35,7 @@ luna-send -n 1 luna://org.webosbrew.hbchannel.service/elevateService '{"id":"org
 
 Perform elevation before first opening the app or calling its service. If the service was already started without root, elevation updates its launch permissions but does not restart the existing process: terminate only the own `histogram-service` process (verify its executable path first), then reopen the app or call start again. Closing the UI alone does not terminate the native service.
 
-Open **HyperDRM** on the TV and select **Start**. Use the remote arrow buttons to move between controls and OK to activate the selected control. Magic Remote pointer input is also supported. Hyperion's JSON server must be enabled on port 19444. The existing Hyperion LED device/output configuration remains responsible for controlling the hardware.
+Open **HyperDRM** on the TV and select **Start**. Use the remote arrow buttons to move between controls and OK to activate the selected control. Magic Remote pointer input is also supported. The receiver's JSON TCP server must be enabled at the IP/port saved in Receiver settings (default 127.0.0.1:19444). The existing Hyperion LED device/output configuration remains responsible for controlling the hardware.
 
 The internal app/service IDs remain `org.webosbrew.histogramhyperion` and `org.webosbrew.histogramhyperion.service` so existing installations and the autostart hook remain compatible. Hyperion displays the source as **HyperDRM**. After changing the LED layout, restart the service.
 
@@ -99,3 +99,15 @@ The app displays the selected source and PicCap's Hyperion connection status. Hi
 ## Capture interruption recovery
 
 LG may revoke histogram capture during playback transitions. From 0.7.1, HyperDRM releases capture while leaving its last color update to expire normally after 1.5 seconds, then retries initialization after 200 ms and up to two additional 400 ms intervals. Successful recovery clears this rapid retry budget. Persistent failure returns to the existing five-second retry interval; manual Stop, PicCap handover and shutdown still explicitly clear the own color source. Status exposes `captureRecoveries` and `lastRecoveryMs` for diagnosis.
+
+## Hyperion and HyperHDR receiver settings
+
+Choose **Receiver: Hyperion/HyperHDR**, enter an IPv4 or IPv6 address and the JSON TCP port, then select **Save receiver**. These receivers use the same color, clear and serverinfo commands. Use the JSON port (usually 19444), not the FlatBuffer port (usually 19400) or web interface port. Numeric IP addresses are supported; hostnames and scoped IPv6 addresses are not currently accepted. Layout and LED count come from the selected receiver, including remote receivers.
+
+Settings are saved in `target.json` inside the own service container and loaded after service restart/boot. Saving valid settings switches a running session to the new receiver and clears the own priority at the old receiver. Invalid settings leave the current target intact. Saving while manually stopped does not start a session. Uninstalling removes the saved settings with the container.
+
+For a receiver requiring authentication, enter its API token. The token file is mode 0600; status only reports whether a token is saved. Leaving the input blank retains it; **Remove saved token** deletes it when saving. A token login happens before requesting the layout or initializing LG capture. JSON TCP traffic is unencrypted, so use a trusted network. Receiver authorization rules are unchanged.
+
+Auto PicCap remains available for the default local receiver at 127.0.0.1/::1:19444. For custom targets, automatic PicCap capture is paused and HyperDRM supplies colors for all playback; the PicCap preference remains saved. PicCap has a separate FlatBuffer endpoint managed by its own app, which HyperDRM does not rewrite.
+
+`native/test_target.c` verifies validation, token retention/removal, private persistence and TCP connection/refusal. `tests/receiver-proxy.py` is a test-only relay with synthetic token login and fragmented replies. Local HyperHDR 22.0.0 and a remote relay using a different IP/port were tested on the G4; the relay forwarded real color updates to HyperHDR without changing its configuration.

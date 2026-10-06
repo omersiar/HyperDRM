@@ -80,7 +80,7 @@ static bool handover_tick(void){
   media_deadline=now+3000;
   error_free(&e);next_media_probe=now+1000;
  }
- bool clear=handover_enabled && piccap_installed() && !retries.paused && !retries.blocked &&
+ bool clear=handover_enabled && target_piccap_local(&target) && piccap_installed() && !retries.paused && !retries.blocked &&
   protection==PLAYBACK_CLEAR && clear_samples>=2 && now-protection_at<3000 && now>=handover_cooldown;
  if(capture_source==SOURCE_HISTOGRAM && clear){
   stop_capture();retries.due=0;piccap_owned=true;capture_source=SOURCE_PICCAP_STARTING;

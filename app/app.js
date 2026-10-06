@@ -1,5 +1,6 @@
 'use strict';
 var pending=[];
+var targetDirty=false,receiver='Hyperion';
 function call(method,done,data){
  if(typeof PalmServiceBridge==='undefined'){done({returnValue:false,errorText:'This app requires an LG TV with the native service installed.'});return;}
  var bridge=new PalmServiceBridge(),timer,finished=false;
@@ -9,6 +10,12 @@ function call(method,done,data){
  bridge.call('luna://org.webosbrew.histogramhyperion.service/'+method,JSON.stringify(data||{}));
 }
 function display(result){
+ if(result.host && !targetDirty){
+  document.getElementById('host').value=result.host;document.getElementById('port').value=result.port;receiver=result.receiver;
+  document.getElementById('receiver').textContent='Receiver: '+receiver;
+ }
+ document.getElementById('token').placeholder=result.tokenSet?'Saved token (leave blank to keep)':'No token saved';
+ if(result.endpoint)document.getElementById('endpoint').textContent=result.receiver+' · '+result.endpoint+' · Priority 149 · 10 updates per second';
  var handover=document.getElementById('handover');handover.disabled=!result.piccapInstalled;
  handover.setAttribute('aria-checked',String(!!result.piccapHandover));
  handover.textContent=result.piccapInstalled?'Auto PicCap: '+(result.piccapHandover?'On':'Off'):'Auto PicCap: Not installed';
@@ -16,15 +23,16 @@ function display(result){
  document.getElementById('error').textContent=result.errorText||result.error||'';
  document.getElementById('status').textContent=result.returnValue===false?'Service unavailable':(result.running?'Running':'Stopped')+' · '+(result.frames||0)+' acknowledged color updates';
  if(result.activeSource==='PicCap'){
-  document.getElementById('status').textContent='PicCap · '+(result.running?'Running':'Switching capture source')+' · '+(result.piccapConnected?'Hyperion connected':'Waiting for Hyperion');
+  document.getElementById('status').textContent='PicCap · '+(result.running?'Running':'Switching capture source')+' · '+(result.piccapConnected?'Receiver connected':'Waiting for receiver');
   document.getElementById('regions').textContent='';return;
  }
  if(result.piccapHandover)document.getElementById('status').textContent+=' · HyperDRM · '+result.playbackProtection;
+ if(result.piccapHandover && !result.piccapTargetCompatible)document.getElementById('status').textContent+=' · Auto PicCap paused for custom target';
  if(result.colorValid)document.getElementById('status').textContent+=result.spatialOutput?' · '+result.ledCount+' LEDs from 16 color regions':' · Output RGB: '+result.outputColor.join(', ');
  else if(result.returnValue!==false)document.getElementById('status').textContent+=' · No current color output';
  if(result.blackBarDetection && result.running)document.getElementById('status').textContent+=result.letterboxDetected?' · Top/bottom black bars detected':' · Full-screen capture';
  if(result.spatialInterpolation)document.getElementById('status').textContent+=' · Smooth color transitions';
- if(result.retryScheduled)document.getElementById('status').textContent+=' · Retrying startup every 5 seconds';
+ if(result.retryScheduled)document.getElementById('status').textContent+=' · Retrying receiver or capture startup';
  if(result.retryPaused)document.getElementById('status').textContent+=' · Automatic retry paused until Start';
  var box=document.getElementById('regions');box.textContent='';
  (result.regions||[]).forEach(function(rgb,index){var e=document.createElement('div');e.className='swatch';e.style.backgroundColor='rgb('+rgb.join(',')+')';e.title='Histogram '+index;box.appendChild(e);});
@@ -38,4 +46,13 @@ document.getElementById('start').focus();
 document.getElementById('autostart').onclick=function(){var button=this;var enabled=button.getAttribute('aria-checked')!=='true';button.disabled=true;call('autostart',function(r){button.disabled=false;if(r.returnValue===false)document.getElementById('error').textContent=r.errorText;else call('status',display);},{enabled:enabled});};
 
 document.getElementById('handover').onclick=function(){var button=this;button.disabled=true;call('handover',function(r){button.disabled=false;if(r.returnValue===false)document.getElementById('error').textContent=r.errorText;else call('status',display);},{enabled:button.getAttribute('aria-checked')!=='true'});};
-setupRemoteNavigation(['start','stop','refresh','autostart','handover'].map(function(id){return document.getElementById(id);}),document,window);
+['host','port','token','clearToken'].forEach(function(id){document.getElementById(id).addEventListener('input',function(){targetDirty=true;});});
+document.getElementById('receiver').onclick=function(){receiver=receiver==='Hyperion'?'HyperHDR':'Hyperion';this.textContent='Receiver: '+receiver;targetDirty=true;};
+document.getElementById('saveTarget').onclick=function(){
+ var port=Number(document.getElementById('port').value),button=this;
+ if(!Number.isInteger(port)||port<1||port>65535){document.getElementById('error').textContent='JSON port must be an integer from 1 to 65535.';return;}
+ var settings={host:document.getElementById('host').value.trim(),port:port,receiver:receiver,clearToken:document.getElementById('clearToken').checked};
+ var token=document.getElementById('token').value.trim();if(token)settings.token=token;
+ button.disabled=true;call('settings',function(r){button.disabled=false;if(r.returnValue===false){document.getElementById('error').textContent=r.errorText;return;}targetDirty=false;document.getElementById('token').value='';document.getElementById('clearToken').checked=false;call('status',display);},settings);
+};
+setupRemoteNavigation(['start','stop','refresh','autostart','handover','receiver','host','port','token','clearToken','saveTarget'].map(function(id){return document.getElementById(id);}),document,window);

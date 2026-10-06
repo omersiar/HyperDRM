@@ -17,6 +17,8 @@ static const char *payload(void *m){return m;}
 static void error_init(LSError *e){(void)e;}
 static void error_free(LSError *e){(void)e;}
 #define PICCAP_BINARY "/bin/sh"
+static int target;
+static bool target_piccap_local(const int *t){(void)t;return true;}
 #include "handover.h"
 static bool mock_call(void *h,const char *uri,const char *data,Callback cb,void *ctx,unsigned long *token,LSError *e){
  (void)h;(void)data;(void)cb;(void)ctx;(void)e;*token=++called;snprintf(last_uri,sizeof(last_uri),"%s",uri);return true;
