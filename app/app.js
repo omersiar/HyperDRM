@@ -1,6 +1,26 @@
 'use strict';
 var pending = [];
 var actionError = '';
+var versionCompatible = typeof HYPERDRM_APP_VERSION === 'undefined';
+
+function checkServiceVersion(result) {
+    if (typeof HYPERDRM_APP_VERSION === 'undefined' || result.returnValue === false) return;
+    versionCompatible = result.version === HYPERDRM_APP_VERSION;
+    var warning = document.getElementById('versionWarning');
+    warning.style.display = versionCompatible ? 'none' : 'block';
+    document.getElementById('reloadService').style.display = versionCompatible ? 'none' : 'inline-block';
+    warning.textContent = versionCompatible ? '' : 'App ' + HYPERDRM_APP_VERSION + ' / service ' + (result.version || 'unknown') + '. The installed service does not match this app. Finish the update, then select Reload service before changing settings. Reloading briefly stops ambient lighting.';
+    ['start', 'autostart', 'handover', 'saveTarget', 'testConnection', 'calibrate', 'validateCalibration', 'saveProfile'].forEach(function(id) {
+        var button = document.getElementById(id);
+        if (!versionCompatible) {
+            button.versionBlocked = true;
+            button.disabled = true;
+        } else if (button.versionBlocked) {
+            button.versionBlocked = false;
+            button.disabled = id === 'handover' ? !result.piccapInstalled : id === 'testConnection' && result.connectionTest && ['Connecting', 'Sending request', 'Checking authentication', 'Reading LED layout'].indexOf(result.connectionTest.state) >= 0;
+        }
+    });
+}
 
 function showActionError(message) {
     actionError = message || '';
@@ -32,6 +52,13 @@ function showProfile() {
 }
 
 function call(method, done, data) {
+    if (!versionCompatible && ['start', 'autostart', 'handover', 'settings', 'testConnection', 'calibration', 'calibrationSession', 'calibrationDraft'].indexOf(method) >= 0 && !(method === 'calibrationSession' && data && data.enabled === false)) {
+        done({
+            returnValue: false,
+            errorText: 'App and service versions do not match. Finish the update first.'
+        });
+        return;
+    }
     if (['start', 'stop', 'autostart', 'handover', 'settings', 'testConnection', 'calibration'].indexOf(method) >= 0) clearActionError();
     callUri('luna://org.webosbrew.histogramhyperion.service/' + method, function(result) {
         if (method !== 'status' && result.returnValue === false) showActionError(result.errorText || 'The action failed.');
@@ -117,10 +144,11 @@ function display(result) {
         toggle.textContent = 'Autostart: ' + (result.autostart ? 'On' : 'Off');
     }
     document.getElementById('error').textContent = actionError || result.errorText || result.error || '';
-    document.getElementById('status').textContent = result.returnValue === false ? 'Service unavailable' : (result.running ? 'Running' : 'Stopped') + ' · ' + (result.frames || 0) + ' acknowledged color updates';
+    document.getElementById('status').textContent = result.returnValue === false ? 'Service unavailable' : (result.receiverConnecting ? 'Connecting to receiver' : result.running ? 'Running' : 'Stopped') + ' · ' + (result.frames || 0) + ' acknowledged color updates';
     if (result.activeSource === 'PicCap') {
         document.getElementById('status').textContent = 'PicCap · ' + (result.running ? 'Running' : 'Switching capture source') + ' · ' + (result.piccapConnected ? 'Receiver connected' : 'Waiting for receiver');
         document.getElementById('regions').textContent = '';
+        checkServiceVersion(result);
         return;
     }
     if (result.piccapHandover) document.getElementById('status').textContent += ' · HyperDRM · ' + result.playbackProtection;
@@ -143,7 +171,25 @@ function display(result) {
         e.title = 'Histogram ' + index;
         box.appendChild(e);
     });
+    checkServiceVersion(result);
 }
+document.getElementById('reloadService').onclick = function() {
+    var button = this;
+    button.disabled = true;
+    clearActionError();
+    call('restartService', function(result) {
+        if (result.returnValue === false) {
+            button.disabled = false;
+            showActionError(result.errorText || 'Reinstall the current package, then restart its service.');
+            return;
+        }
+        setTimeout(function() {
+            button.disabled = false;
+            call('status', display);
+        }, 1500);
+    });
+};
+
 document.getElementById('start').onclick = function() {
     call('start', function(r) {
         if (r.returnValue === false) display(r);
@@ -347,6 +393,6 @@ document.getElementById('editProfile').onclick = function() {
     showProfile();
     if (advancedProfile) document.getElementById('customProfileField').focus();
 };
-setupRemoteNavigation(['overviewTab', 'receiverTab', 'calibrationTab', 'grantRoot', 'start', 'stop', 'refresh', 'autostart', 'handover', 'calibrationShortcut', 'receiver', 'hostField', 'portField', 'piccapPortField', 'tokenField', 'clearToken', 'saveTarget', 'testConnection', 'calibrate', 'validateCalibration', 'profile', 'saveProfile', 'editProfile', 'customProfileField', 'cancelCalibration'].map(function(id) {
+setupRemoteNavigation(['overviewTab', 'receiverTab', 'calibrationTab', 'reloadService', 'grantRoot', 'start', 'stop', 'refresh', 'autostart', 'handover', 'calibrationShortcut', 'receiver', 'hostField', 'portField', 'piccapPortField', 'tokenField', 'clearToken', 'saveTarget', 'testConnection', 'calibrate', 'validateCalibration', 'profile', 'saveProfile', 'editProfile', 'customProfileField', 'cancelCalibration'].map(function(id) {
     return document.getElementById(id);
 }), document, window);

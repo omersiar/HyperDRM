@@ -21,6 +21,10 @@ def synchronize(check=False):
     path = ROOT / 'native/version.h'
     if not path.exists() or path.read_text(encoding='utf-8') != header:
         updates[path] = header
+    path = ROOT / 'app/version.js'
+    script = "'use strict';\nvar HYPERDRM_APP_VERSION = '" + version + "';\n"
+    if not path.exists() or path.read_text(encoding='utf-8') != script:
+        updates[path] = script
     if check and updates:
         raise ValueError('Version metadata is stale; run sync_version.py')
     for path, content in updates.items():

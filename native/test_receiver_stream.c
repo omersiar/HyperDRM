@@ -104,7 +104,7 @@ int main(void) {
     assert(!target_parse(&json, "{}", &copy));
     assert(!target_save("/no/such/profile", &copy));
     assert(!target_load(&json, "/no/such/profile", &copy));
-    int fd = target_connect(&copy);
+    int fd = target_open(&copy);
     if (fd >= 0)
         close(fd);
     dlclose(json.lib);

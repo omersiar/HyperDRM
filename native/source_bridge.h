@@ -44,7 +44,7 @@ static bool bridge_send(const unsigned char colors[16][3]) {
     free(line);
     return ok;
 }
-static void bridge_tick(uint64_t now) {
+static void bridge_tick(uint64_t now, CaptureContext *capture) {
     if (retries.paused || retries.blocked) {
         if (bridge_phase)
             bridge_clear();
@@ -54,15 +54,17 @@ static void bridge_tick(uint64_t now) {
     }
     if (capture_source != bridge_source) {
         if (capture_source == SOURCE_PICCAP_STARTING) {
-            bridge_phase = continuity.available && now - continuity.valid_at < 2000 ? BRIDGE_HOLDING
-                                                                                    : BRIDGE_IDLE;
+            bridge_phase =
+                capture->continuity.available && now - capture->continuity.valid_at < 2000
+                    ? BRIDGE_HOLDING
+                    : BRIDGE_IDLE;
             bridge_started = now;
-            memcpy(bridge_from, continuity.last, sizeof(bridge_from));
+            memcpy(bridge_from, capture->continuity.last, sizeof(bridge_from));
         } else if (capture_source == SOURCE_PICCAP_STOPPING ||
                    (bridge_source == SOURCE_PICCAP && capture_source == SOURCE_HISTOGRAM)) {
             bridge_phase = BRIDGE_IDLE;
             if (stream.valid && now - stream.updated < 1000) {
-                continuity_seed(&continuity, stream.colors, now);
+                continuity_seed(&capture->continuity, stream.colors, now);
                 bridge_send(stream.colors);
             }
         }

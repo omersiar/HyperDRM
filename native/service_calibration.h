@@ -3,24 +3,22 @@ static bool calibration_session(void *h, void *m, void *ctx) {
     (void)ctx;
     const char *p = payload(m);
     if (!strcmp(p, "{\"enabled\":true}")) {
-        calibration_until = milliseconds() + 110000;
-        if (capture && vt_preset(capture, 0) != 0) {
-            calibration_until = 0;
+        calibration_ctx.until = milliseconds() + 110000;
+        if (capture_ctx.handle && vt_preset(capture_ctx.handle, 0) != 0) {
+            calibration_ctx.until = 0;
             return respond(h, m,
                            "{\"returnValue\":false,\"errorText\":\"Cannot select full-screen "
                            "calibration capture\"}");
         }
-        capture_preset = letterbox_mode = 0;
-        settling = 2;
-        pending_letterbox = -1;
+        capture_ctx.preset = capture_ctx.letterbox_mode = 0;
+        capture_ctx.settling = 2;
+        capture_ctx.pending_letterbox = -1;
     } else if (!strcmp(p, "{\"enabled\":false}"))
-        calibration_until = 0;
+        calibration_ctx.until = 0;
     else
         return respond(h, m, "{\"returnValue\":false,\"errorText\":\"Expected enabled boolean\"}");
     return respond(h, m, "{\"returnValue\":true}");
 }
-static Calibration calibration_draft;
-static char calibration_message[256];
 static bool report_calibration(void *h, void *m, void *ctx) {
     if (!playback_json.lib)
         return respond(h, m, "{\"returnValue\":false,\"errorText\":\"JSON-C is unavailable\"}");
@@ -28,9 +26,9 @@ static bool report_calibration(void *h, void *m, void *ctx) {
     void *root = playback_json.parse(payload(m)),
          *message = playback_field(&playback_json, root, "message");
     bool valid = message && playback_json.type(message) == 6 &&
-                 strlen(playback_json.string(message)) < sizeof(calibration_message);
+                 strlen(playback_json.string(message)) < sizeof(calibration_ctx.message);
     if (valid)
-        snprintf(calibration_message, sizeof(calibration_message), "%s",
+        snprintf(calibration_ctx.message, sizeof(calibration_ctx.message), "%s",
                  playback_json.string(message));
     if (root)
         playback_json.put(root);
@@ -46,17 +44,14 @@ static bool draft_calibration(void *h, void *m, void *ctx) {
         next.kind != CAL_CUSTOM || next.count < 4 || strcmp(next.model, tv_model))
         return respond(h, m,
                        "{\"returnValue\":false,\"errorText\":\"Invalid measured model profile\"}");
-    calibration_draft = next;
+    calibration_ctx.draft = next;
     return respond(h, m, "{\"returnValue\":true}");
 }
-static bool model_busy;
-static unsigned long model_token;
-static uint64_t model_deadline, next_model_probe;
 static bool model_reply(void *h, void *m, void *ctx) {
     (void)h;
     (void)ctx;
-    model_busy = false;
-    model_token = 0;
+    calibration_ctx.model_busy = false;
+    calibration_ctx.model_token = 0;
     void *root = playback_json.parse(payload(m)),
          *model = playback_field(&playback_json, root, "modelName");
     if (playback_true(&playback_json, root, "returnValue") && model &&
@@ -70,23 +65,23 @@ static bool model_reply(void *h, void *m, void *ctx) {
     return true;
 }
 static void model_tick(uint64_t now) {
-    if (model_busy && now >= model_deadline) {
+    if (calibration_ctx.model_busy && now >= calibration_ctx.model_deadline) {
         LSError e;
         error_init(&e);
-        cancel_call(service_handle, model_token, &e);
+        cancel_call(service_handle, calibration_ctx.model_token, &e);
         error_free(&e);
-        model_busy = false;
-        model_token = 0;
+        calibration_ctx.model_busy = false;
+        calibration_ctx.model_token = 0;
     }
-    if (!tv_model[0] && !model_busy && now >= next_model_probe) {
+    if (!tv_model[0] && !calibration_ctx.model_busy && now >= calibration_ctx.next_model_probe) {
         LSError e;
         error_init(&e);
-        model_busy =
-            call_once(service_handle, "luna://com.webos.service.tv.systemproperty/getSystemInfo",
-                      "{\"keys\":[\"modelName\"]}", model_reply, NULL, &model_token, &e);
+        calibration_ctx.model_busy = call_once(
+            service_handle, "luna://com.webos.service.tv.systemproperty/getSystemInfo",
+            "{\"keys\":[\"modelName\"]}", model_reply, NULL, &calibration_ctx.model_token, &e);
         error_free(&e);
-        model_deadline = now + 3000;
-        next_model_probe = now + 60000;
+        calibration_ctx.model_deadline = now + 3000;
+        calibration_ctx.next_model_probe = now + 60000;
     }
 }
 static bool set_calibration(void *h, void *m, void *ctx) {

@@ -12,6 +12,9 @@ Formatting must preserve include order (`SortIncludes: Never`).
 | service_calibration.h | Bounded calibration lease, proposals, profiles, model discovery |
 | service_status.h | Read-only status serialization |
 | capture_loop.h | Scheduler, histogram acquisition, missing-data recovery and output |
+| receiver_output.h | Main asynchronous connection, transaction matching and frame coalescing |
+| atomic_file.h | Durable preference replacement and explicit commit outcomes |
+| service_context.h / runtime_context.h | Capture, receiver/layout and calibration session ownership |
 | receiver_stream.h | Independent, nonblocking receiver LED subscription |
 | source_bridge.h | Bounded color continuity during source transitions |
 | handover.h | Exclusive PicCap/histogram capture ownership |
@@ -44,3 +47,25 @@ VERSION generates app/package metadata and native/version.h. release.py tests
 portable logic locally, builds the ARM service and verifies the exact package.
 Hardware capture and Magic Remote behavior still require a later TV check; a host
 test is not evidence of LG hardware behavior.
+
+The main receiver owns a ReceiverOutput context passed explicitly to begin, tick,
+frame, stop and close. Its lifecycle is Idle -> Connecting -> Login (optional) ->
+Layout -> Ready, with Failed on transport/protocol errors. Requests use a positive
+32-bit `tan`, echoed by the receiver, to avoid acknowledging the wrong command.
+Each tick has a 64 KiB send budget and a 64 KiB read budget; buffered input has an
+eight-message budget and 2 MiB limit. An ACK can send the newest queued frame in
+the same tick without resetting that byte budget. There is one pending command
+and one replaceable frame, not an unbounded queue. Transaction deadlines are three
+seconds. Shutdown and cancellation release all owned buffers and sockets.
+
+The source bridge receives CaptureContext explicitly; layout refresh receives
+ReceiverLayoutContext explicitly. Capture data, continuity, recovery counters and
+LG handles are grouped separately from receiver transport and calibration session
+lease/model-query/proposal fields. LG/Luna symbols, persisted calibration and
+handover ownership still have shared service scope; this refactor reduces globals
+rather than claiming complete isolation.
+
+Transaction echo behavior is defined by the official implementations:
+[Hyperion 2.0.16 JsonAPI](https://github.com/hyperion-project/hyperion.ng/blob/2.0.16/libsrc/api/JsonAPI.cpp)
+and [HyperHDR HyperAPI](https://github.com/awawa-dev/HyperHDR/blob/master/sources/api/HyperAPI.cpp).
+This code check does not replace a deployment test against the user's receiver.

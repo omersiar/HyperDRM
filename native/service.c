@@ -29,6 +29,7 @@
 #include "spatial_image.h"
 #include "diagnostics.h"
 #include "continuity.h"
+#include "service_context.h"
 #define SERVICE "org.webosbrew.histogramhyperion.service"
 #define PRIORITY 149
 typedef struct {
@@ -52,20 +53,21 @@ static bool (*error_init)(LSError *);
 static void (*error_free)(LSError *);
 static void *(*vt_init)(bool (*)(void));
 static int (*vt_preset)(void *, int), (*vt_get)(void *, Histogram *), (*vt_finish)(void *);
-static void *capture;
-static char lg_diagnostic[256];
+static CaptureContext capture_ctx = {.pending_letterbox = -1};
+static ReceiverLayoutContext receiver_layout;
+static CalibrationSessionContext calibration_ctx;
 /* Process-local LG diagnostics; no changes to the loaded LG library. */
 void printLog(const char *context, int level, const char *message_id, const char *file,
               const char *function, int line, const char *format, ...) {
     (void)context;
     (void)message_id;
     (void)file;
-    if (capture && level > 3)
+    if (capture_ctx.handle && level > 3)
         return;
     if (format) {
         va_list args;
         va_start(args, format);
-        vsnprintf(lg_diagnostic, sizeof(lg_diagnostic), format, args);
+        vsnprintf(capture_ctx.diagnostic, sizeof(capture_ctx.diagnostic), format, args);
         va_end(args);
     }
     fprintf(stderr, "LG %s:%d: ", function ? function : "?", line);
@@ -77,36 +79,20 @@ void printLog(const char *context, int level, const char *message_id, const char
     }
     fputc('\n', stderr);
 }
-static int output = -1;
-static unsigned long frames;
-static unsigned char rgb[16][3];
-static unsigned char sent_rgb[3];
-static unsigned black_percent[16];
-static unsigned capture_preset;
-static unsigned letterbox_mode, settling;
-static int pending_letterbox = -1;
-static uint64_t candidate_since, next_border_probe;
-static bool color_valid;
-static Continuity continuity;
-static uint64_t sample_at, calibration_until;
-static unsigned sample_sequence;
-#define CALIBRATION_ACTIVE (calibration_until > milliseconds())
-static unsigned led_count;
-static LedBlend *led_blends;
-static bool interpolation_enabled;
+#define CALIBRATION_ACTIVE (calibration_ctx.until > milliseconds())
 static RetryState retries;
-static unsigned capture_recoveries;
-static uint64_t recovery_started, last_recovery_ms, last_output_at;
 static uint64_t milliseconds(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 static char last_error[256];
-static volatile sig_atomic_t revoked, quitting;
+static volatile sig_atomic_t quitting;
 static int guard_pipe = -1;
 static pid_t guard_pid = -1;
+#ifndef DEV_MODE
 #define DEV_MODE "/var/luna/preferences/vt_devmode"
+#endif
 /* LG's developer gate is enabled only during initialization. A separate
  * guardian removes our own marker even if this process aborts or is killed.
  * An existing marker is preserved, as are files replaced by another owner. */
@@ -169,135 +155,30 @@ static void quit_signal(int s) {
     quitting = 1;
 }
 static bool policy(void) {
-    revoked = 1;
+    capture_ctx.revoked = 1;
     return true;
 }
 static void set_error(const char *s) {
     snprintf(last_error, sizeof(last_error), "%s", s);
     fprintf(stderr, "%s\n", s);
 }
-static int send_line(const char *line) {
-    size_t left = strlen(line);
-    const char *p = line;
-    while (left) {
-        ssize_t n = send(output, p, left, MSG_NOSIGNAL);
-        if (n <= 0)
-            return -1;
-        p += n;
-        left -= n;
-    }
-    return 0;
-}
-static bool receiver_ack(void) {
-    char answer[4096];
-    size_t used = 0;
-    bool complete = false;
-    while (used + 1 < sizeof(answer)) {
-        ssize_t n = recv(output, answer + used, sizeof(answer) - used - 1, 0);
-        if (n <= 0)
-            break;
-        used += (size_t)n;
-        answer[used] = 0;
-        if (strchr(answer, '\n')) {
-            complete = true;
-            break;
-        }
-    }
-    PlaybackJson json = {0};
-    if (!complete || !playback_json_init(&json))
-        return false;
-    void *root = json.parse(answer);
-    bool ok = playback_true(&json, root, "success");
-    if (root)
-        json.put(root);
-    dlclose(json.lib);
-    return ok;
-}
-static bool read_layout(void) {
-    const size_t capacity = 2 * 1024 * 1024;
-    char *data = malloc(capacity + 1);
-    if (!data)
-        return false;
-    bool complete = false;
-    size_t used = 0;
-    if (send_line("{\"command\":\"serverinfo\"}\n") == 0) {
-        while (used < capacity) {
-            ssize_t n = recv(output, data + used, capacity - used, 0);
-            if (n <= 0)
-                break;
-            used += (size_t)n;
-            data[used] = 0;
-            char *end = strchr(data, '\n');
-            if (end) {
-                *end = 0;
-                complete = true;
-                break;
-            }
-        }
-    }
-    LedBlend *mapping = NULL;
-    unsigned count = 0;
-    bool ok = complete && layout_from_json(data, &mapping, &count);
-    if (ok) {
-        free(led_blends);
-        led_blends = mapping;
-        led_count = count;
-    }
-    free(data);
-    interpolation_enabled = ok && calibration_effective() != CAL_AVERAGE;
-    return ok;
-}
-static bool target_login(void) {
-    if (!target.token[0])
-        return true;
-    char request[384], answer[4096];
-    size_t used = 0;
-    snprintf(request, sizeof(request),
-             "{\"command\":\"authorize\",\"subcommand\":\"login\",\"token\":\"%s\"}\n",
-             target.token);
-    if (send_line(request) != 0)
-        return false;
-    while (used + 1 < sizeof(answer)) {
-        ssize_t n = recv(output, answer + used, sizeof(answer) - used - 1, 0);
-        if (n <= 0)
-            return false;
-        used += (size_t)n;
-        answer[used] = 0;
-        if (strchr(answer, '\n'))
-            break;
-    }
-    PlaybackJson json = {0};
-    if (!playback_json_init(&json))
-        return false;
-    void *root = json.parse(answer);
-    bool ok = playback_true(&json, root, "success");
-    if (root)
-        json.put(root);
-    dlclose(json.lib);
-    return ok;
-}
+static ReceiverRuntime receiver_runtime = {.output = {.fd = -1}};
 static void layout_refresh_reset(uint64_t due);
 static void release_capture(bool clear_output) {
     layout_refresh_reset(milliseconds() + 5000);
-    free(led_blends);
-    led_blends = NULL;
-    led_count = 0;
-    interpolation_enabled = false;
-    color_valid = false;
-    memset(rgb, 0, sizeof(rgb));
-    memset(sent_rgb, 0, sizeof(sent_rgb));
-    if (output >= 0) {
-        if (clear_output && frames) {
-            char line[80];
-            snprintf(line, sizeof(line), "{\"command\":\"clear\",\"priority\":%d}\n", PRIORITY);
-            send_line(line);
-        }
-        close(output);
-        output = -1;
-    }
-    if (capture) {
-        vt_finish(capture);
-        capture = NULL;
+    free(receiver_layout.blends);
+    receiver_layout.blends = NULL;
+    receiver_layout.count = 0;
+    receiver_layout.interpolation = false;
+    capture_ctx.color_valid = false;
+    memset(capture_ctx.rgb, 0, sizeof(capture_ctx.rgb));
+    memset(capture_ctx.sent_rgb, 0, sizeof(capture_ctx.sent_rgb));
+    receiver_runtime.starting = false;
+    receiver_runtime.clear_pending = false;
+    output_stop(&receiver_runtime.output, milliseconds(), clear_output);
+    if (capture_ctx.handle) {
+        vt_finish(capture_ctx.handle);
+        capture_ctx.handle = NULL;
     }
 }
 static void stop_capture(void) {
@@ -396,6 +277,7 @@ int main(void) {
     stream_close(milliseconds());
     test_close();
     stop_capture();
+    output_close(&receiver_runtime.output);
     if (piccap_owned) {
         handover_enabled = false;
         retry_pause(&retries);

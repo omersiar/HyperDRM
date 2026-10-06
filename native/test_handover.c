@@ -44,7 +44,7 @@ static void connected_start(void){
  media(PLAYBACK_CLEAR);handover_tick();answer(0,true,true);assert(capture_source==SOURCE_PICCAP);
 }
 int main(void){
- (void)target_save;(void)target_load;(void)target_connect;(void)handover_save;(void)handover_load;
+ (void)target_save;(void)target_load;(void)target_open;(void)handover_save;(void)handover_load;
  (void)retry_failure;(void)retry_take;(void)retry_update;
  assert(playback_json_init(&playback_json));call_once=mock_call;cancel_call=mock_cancel;
  handover_enabled=true;next_media_probe=UINT64_MAX;

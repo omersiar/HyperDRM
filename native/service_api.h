@@ -20,28 +20,27 @@ static bool start(void *h, void *m, void *ctx) {
         retry_reset(&retries);
     if (piccap_owned)
         return respond(h, m, "{\"returnValue\":true,\"running\":true,\"activeSource\":\"PicCap\"}");
-    if (capture)
+    if (capture_ctx.handle)
         return respond(h, m, "{\"returnValue\":true,\"running\":true}");
-    frames = 0;
-    revoked = 0;
+    if (!playback_json.lib) {
+        set_error("JSON-C is unavailable; cannot start receiver output");
+        return start_failure(h, m, "JSON-C is unavailable");
+    }
+    capture_ctx.frames = 0;
+    capture_ctx.revoked = 0;
     last_error[0] = 0;
-    lg_diagnostic[0] = 0;
-    output = target_connect(&target);
-    if (output < 0) {
-        stop_capture();
-        set_error("Cannot connect to configured receiver IP and JSON port");
-        return start_failure(h, m, "Configured receiver is unavailable");
+    capture_ctx.diagnostic[0] = 0;
+    if (receiver_runtime.starting)
+        return respond(h, m, "{\"returnValue\":true,\"connecting\":true}");
+    receiver_runtime.clear_pending = false;
+    if (!output_begin(&receiver_runtime.output, &target, milliseconds())) {
+        set_error(receiver_runtime.output.error);
+        return start_failure(h, m, receiver_runtime.output.error);
     }
-    if (!target_login()) {
-        stop_capture();
-        set_error("Receiver token login failed; check the saved API token");
-        return start_failure(h, m, "Receiver authentication failed");
-    }
-    if (!read_layout()) {
-        stop_capture();
-        set_error("Cannot read receiver LED layout; check JSON port and API authorization");
-        return start_failure(h, m, "Receiver layout unavailable; check API authorization");
-    }
+    receiver_runtime.starting = true;
+    return respond(h, m, "{\"returnValue\":true,\"connecting\":true}");
+}
+static bool initialize_capture(void *h, void *m) {
     if (!enter_developer_mode()) {
         stop_capture();
         set_error("Developer initialization needs root. Elevate this own service through Homebrew "
@@ -49,54 +48,49 @@ static bool start(void *h, void *m, void *ctx) {
         return start_failure(h, m,
                              "Root access is required for temporary LG developer initialization");
     }
-    capture = vt_init(policy);
+    capture_ctx.handle = vt_init(policy);
     if (!leave_developer_mode()) {
         stop_capture();
         retries.blocked = true;
         set_error("Developer marker cleanup failed; manual intervention required");
         return start_failure(h, m, "Developer marker cleanup failed");
     }
-    if (!capture) {
+    if (!capture_ctx.handle) {
         stop_capture();
         set_error("LG refused histogram initialization");
         return start_failure(
             h, m,
             "LG refused histogram initialization. Another capture source may hold VT_CAPTURE.");
     }
-    if (vt_preset(capture, 0) != 0) {
+    if (vt_preset(capture_ctx.handle, 0) != 0) {
         stop_capture();
         set_error("LG histogram preset initialization failed");
         return start_failure(h, m, "Histogram preset failed");
     }
-    capture_preset = letterbox_mode = settling = 0;
-    pending_letterbox = -1;
-    next_border_probe = 0;
+    capture_ctx.preset = capture_ctx.letterbox_mode = capture_ctx.settling = 0;
+    capture_ctx.pending_letterbox = -1;
+    capture_ctx.next_border_probe = 0;
     retries.due = 0;
     retries.attempts = 0;
     retries.quick_retries = 0;
-    if (recovery_started) {
-        last_recovery_ms = milliseconds() - recovery_started;
-        recovery_started = 0;
+    if (capture_ctx.recovery_started) {
+        capture_ctx.last_recovery_ms = milliseconds() - capture_ctx.recovery_started;
+        capture_ctx.recovery_started = 0;
     }
     return respond(h, m, "{\"returnValue\":true,\"running\":true}");
 }
 static bool stop(void *h, void *m, void *ctx) {
     (void)ctx;
-    calibration_until = 0;
+    calibration_ctx.until = 0;
     retry_pause(&retries);
     bool bridging = bridge_phase != BRIDGE_IDLE;
     stream_close(milliseconds());
     bridge_phase = BRIDGE_IDLE;
-    memset(&continuity, 0, sizeof(continuity));
+    memset(&capture_ctx.continuity, 0, sizeof(capture_ctx.continuity));
     stop_capture();
-    if (bridging) {
-        output = target_connect(&target);
-        if (output >= 0) {
-            if (target_login())
-                send_line("{\"command\":\"clear\",\"priority\":149}\n");
-            close(output);
-            output = -1;
-        }
+    if (bridging && receiver_runtime.output.stage != OUTPUT_READY) {
+        output_begin(&receiver_runtime.output, &target, milliseconds());
+        receiver_runtime.clear_pending = true;
     }
     return respond(h, m, "{\"returnValue\":true,\"running\":false}");
 }
@@ -122,7 +116,7 @@ static bool autostart(void *h, void *m, void *ctx) {
             "the installed boot script and whether another file occupies the hook path.\"}");
     if (enabled)
         retry_reset(&retries);
-    retry_update(&retries, enabled, capture != NULL, milliseconds());
+    retry_update(&retries, enabled, capture_ctx.handle != NULL, milliseconds());
     return respond(h, m,
                    enabled ? "{\"returnValue\":true,\"autostart\":true}"
                            : "{\"returnValue\":true,\"autostart\":false}");
@@ -172,11 +166,11 @@ static bool settings(void *h, void *m, void *ctx) {
     if (!target_save(TARGET_PREF, &next))
         return respond(
             h, m, "{\"returnValue\":false,\"errorText\":\"Could not save receiver settings\"}");
-    bool active = capture || piccap_owned || retries.due;
+    bool active = capture_ctx.handle || receiver_runtime.starting || piccap_owned || retries.due;
     stop_capture();
     stream_close(milliseconds());
     bridge_phase = BRIDGE_IDLE;
-    memset(&continuity, 0, sizeof(continuity));
+    memset(&capture_ctx.continuity, 0, sizeof(capture_ctx.continuity));
     test_close();
     connection_test.stage = TEST_IDLE;
     target = next;

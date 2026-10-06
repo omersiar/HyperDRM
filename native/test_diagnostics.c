@@ -32,7 +32,7 @@ static void fixture(PlaybackJson *json,int kind){
  close(server);assert(test_begin(&config,10000));test_tick(json,10010);assert(connection_test.stage==TEST_FAILED);
 }
 int main(void){
- (void)target_save;(void)target_load;(void)target_connect;(void)test_stage_name;
+ (void)target_save;(void)target_load;(void)target_open;(void)test_stage_name;
  PlaybackJson json={0};assert(playback_json_init(&json));
  fixture(&json,0);fixture(&json,1);fixture(&json,2);
  int peers[2];assert(socketpair(AF_UNIX,SOCK_STREAM,0,peers)==0);

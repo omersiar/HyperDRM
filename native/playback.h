@@ -14,6 +14,11 @@ typedef struct {
     const char *(*string)(const void *);
     int (*boolean)(const void *);
     int (*put)(void *);
+    void *(*tokener_new)(void);
+    void *(*tokener_parse)(void *, const char *, int);
+    int (*tokener_error)(void *);
+    size_t (*tokener_end)(void *);
+    void (*tokener_free)(void *);
 } PlaybackJson;
 static inline bool playback_json_init(PlaybackJson *j) {
     j->lib = dlopen("libjson-c.so.5", RTLD_NOW);
@@ -27,13 +32,45 @@ static inline bool playback_json_init(PlaybackJson *j) {
     j->string = dlsym(j->lib, "json_object_get_string");
     j->boolean = dlsym(j->lib, "json_object_get_boolean");
     j->put = dlsym(j->lib, "json_object_put");
+    j->tokener_new = dlsym(j->lib, "json_tokener_new");
+    j->tokener_parse = dlsym(j->lib, "json_tokener_parse_ex");
+    j->tokener_error = dlsym(j->lib, "json_tokener_get_error");
+    j->tokener_end = dlsym(j->lib, "json_tokener_get_parse_end");
+    j->tokener_free = dlsym(j->lib, "json_tokener_free");
     if (!j->parse || !j->get || !j->type || !j->length || !j->at || !j->string || !j->boolean ||
-        !j->put) {
+        !j->put || !j->tokener_new || !j->tokener_parse || !j->tokener_error || !j->tokener_end ||
+        !j->tokener_free) {
         dlclose(j->lib);
         j->lib = NULL;
         return false;
     }
     return true;
+}
+/* Require exactly one complete JSON value. json_tokener_parse alone can accept
+ * an otherwise valid prefix followed by unrelated or truncated content. */
+static inline void *playback_parse_exact(PlaybackJson *j, const char *text) {
+    if (!j || !text || !j->tokener_new || !j->tokener_parse || !j->tokener_error ||
+        !j->tokener_end || !j->tokener_free || !j->put)
+        return NULL;
+    size_t length = strlen(text);
+    if (length > 2 * 1024 * 1024)
+        return NULL;
+    void *tokener = j->tokener_new();
+    if (!tokener)
+        return NULL;
+    void *root = j->tokener_parse(tokener, text, (int)length + 1);
+    size_t end = j->tokener_end(tokener);
+    bool valid = j->tokener_error(tokener) == 0;
+    while (end < length &&
+           (text[end] == ' ' || text[end] == '\t' || text[end] == '\r' || text[end] == '\n'))
+        end++;
+    valid = valid && end == length;
+    j->tokener_free(tokener);
+    if (!valid && root) {
+        j->put(root);
+        root = NULL;
+    }
+    return root;
 }
 static inline void *playback_field(PlaybackJson *j, void *o, const char *key) {
     void *v = NULL;

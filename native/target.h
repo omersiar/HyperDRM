@@ -10,6 +10,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include "playback.h"
+#include "atomic_file.h"
 #define TARGET_PREF                                                                                \
     "/media/developer/apps/usr/palm/services/org.webosbrew.histogramhyperion.service/target.json"
 typedef struct {
@@ -44,7 +45,7 @@ static bool target_valid(const TargetConfig *t) {
     return true;
 }
 static bool target_parse(PlaybackJson *j, const char *text, TargetConfig *out) {
-    void *root = j->parse(text);
+    void *root = playback_parse_exact(j, text);
     if (!root)
         return false;
     TargetConfig next = *out;
@@ -112,24 +113,13 @@ static bool target_parse(PlaybackJson *j, const char *text, TargetConfig *out) {
 static bool target_save(const char *path, const TargetConfig *t) {
     if (!target_valid(t))
         return false;
-    char tmp[512], data[512];
-    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp))
-        return false;
+    char data[512];
     int n = snprintf(
         data, sizeof(data),
         "{\"host\":\"%s\",\"port\":%u,\"piccapPort\":%u,\"receiver\":\"%s\",\"token\":\"%s\"}\n",
         t->host, t->port, t->piccap_port, t->receiver, t->token);
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (fd < 0)
-        return false;
-    bool ok = write(fd, data, n) == n && fsync(fd) == 0;
-    if (close(fd) != 0)
-        ok = false;
-    if (ok)
-        ok = rename(tmp, path) == 0;
-    if (!ok)
-        unlink(tmp);
-    return ok;
+    return n > 0 && (size_t)n < sizeof(data) &&
+           atomic_replace(path, data, (size_t)n) != SAVE_UNCHANGED;
 }
 static bool target_load(PlaybackJson *j, const char *path, TargetConfig *t) {
     int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
@@ -176,28 +166,6 @@ static int target_open(const TargetConfig *t) {
             return -1;
         }
     }
-    return fd;
-}
-static int target_connect(const TargetConfig *t) {
-    int fd = target_open(t);
-    if (fd < 0)
-        return -1;
-    struct pollfd p = {.fd = fd, .events = POLLOUT};
-    int error = 0;
-    socklen_t size = sizeof(error);
-    if (poll(&p, 1, 1000) <= 0 || getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) != 0 ||
-        error) {
-        close(fd);
-        return -1;
-    }
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0 || fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0) {
-        close(fd);
-        return -1;
-    }
-    struct timeval timeout = {1, 0};
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     return fd;
 }
 #endif

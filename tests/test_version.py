@@ -34,6 +34,12 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(app, {'version': '1.2.3', 'id': 'unchanged'})
         self.assertIn('"1.2.3"', (sync_version.ROOT / 'native/version.h').read_text())
 
+    def test_ui_drift_is_rejected(self):
+        sync_version.synchronize()
+        (sync_version.ROOT / 'app/version.js').write_text("var HYPERDRM_APP_VERSION = 'old';")
+        with self.assertRaises(ValueError):
+            sync_version.synchronize(check=True)
+
     def test_invalid_version_is_rejected(self):
         (sync_version.ROOT / 'VERSION').write_text('1.2\n')
         with self.assertRaises(ValueError):

@@ -135,13 +135,17 @@ static void probe_tick(ReceiverProbe *probe, PlaybackJson *json, uint64_t now) {
         probe_finish(probe, "Receiver closed the test connection", now);
         return;
     }
+    if (memchr(probe->response + probe->used, 0, (size_t)n)) {
+        probe_finish(probe, "Receiver sent an embedded NUL", now);
+        return;
+    }
     probe->used += (size_t)n;
     probe->response[probe->used] = 0;
     char *end = strchr(probe->response, '\n');
     if (!end)
         return;
     *end = 0;
-    void *root = json->parse(probe->response);
+    void *root = playback_parse_exact(json, probe->response);
     bool success = playback_true(json, root, "success");
     if (root)
         json->put(root);

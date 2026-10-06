@@ -89,6 +89,10 @@ function wizardSample() {
 }
 
 function wizardStart(validation) {
+    if (typeof versionCompatible !== 'undefined' && !versionCompatible) {
+        document.getElementById('wizardStatus').textContent = 'Finish the app/service update before calibration.';
+        return;
+    }
     if (wizard) return;
     if (typeof showPanel === 'function') showPanel('calibration', false);
     if (targetDirty || profileDirty) {

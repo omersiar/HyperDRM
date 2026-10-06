@@ -27,7 +27,7 @@ Only the own service is modified. Optional Auto PicCap can configure its receive
 
 ## Installation
 
-The current package is [HyperDRM_0.12.0_arm.ipk](HyperDRM_0.12.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.13.0_arm.ipk](HyperDRM_0.13.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -209,3 +209,27 @@ An existing tag or a branch other than main is rejected. Attach the exact verifi
 IPK to the matching Gitea release using an authorized session, then compare the
 downloaded attachment's size and SHA-256. Git access does not authorize web uploads.
 See [runtime architecture](docs/architecture.md) for module boundaries.
+
+### Receiver resilience and updates
+
+The main receiver socket stays nonblocking during connect, authentication, layout
+loading, color output and acknowledgements. Only one command is in flight and the
+newest unsent frame replaces older unsent frames. Timed-out or invalid replies
+close the connection and use the existing retry policy. Start returns a Connecting
+state; Stop cancels startup and sends a bounded asynchronous clear when needed.
+LG capture initialization itself remains dependent on the vendor library.
+
+Receiver, profile and PicCap preferences share an atomic writer with private
+permissions, interrupted/partial-write handling, file sync, rename and directory
+sync. Failures before rename preserve the previous preference. A directory-sync
+failure after rename is reported as committed with uncertain crash durability;
+it is not represented as a rollback.
+
+The UI compares its generated version against the running service. Mismatches
+block settings and startup actions while keeping Stop and status available. After
+installing the matching package, Reload service explicitly restarts only HyperDRM
+and briefly interrupts ambient lighting; it never runs automatically.
+
+`python release.py --sanitizers` additionally checks protocol, atomic-file,
+receiver-output and simulated service-lifecycle tests with ASan/UBSan. These host
+tests do not replace real LG capture and remote-control validation on a TV.

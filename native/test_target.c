@@ -3,6 +3,13 @@
 #include <sys/stat.h>
 #include <string.h>
 #include "target.h"
+static int fixture_connect(const TargetConfig *target){
+ int fd=target_open(target);if(fd<0)return -1;
+ assert(fcntl(fd,F_GETFL,0)&O_NONBLOCK);
+ struct pollfd event={fd,POLLOUT,0};int error=0;socklen_t size=sizeof(error);
+ if(poll(&event,1,1000)<=0 || getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&size) || error){close(fd);return -1;}
+ return fd;
+}
 int main(void){
  PlaybackJson j={0};assert(playback_json_init(&j));TargetConfig t=target;
  assert(target_valid(&t));assert(t.piccap_port==19400);assert(target_piccap_local(&t));
@@ -22,7 +29,7 @@ int main(void){
  assert(target_parse(&j,"{\"host\":\"127.0.0.1\",\"port\":19444,\"receiver\":\"HyperHDR\",\"clearToken\":true}",&t));assert(!t.token[0]);assert(target_piccap_local(&t));unlink(file);
  int server=socket(AF_INET,SOCK_STREAM,0);assert(server>=0);struct sockaddr_in a={.sin_family=AF_INET,.sin_addr={htonl(INADDR_LOOPBACK)}};
  assert(bind(server,(void*)&a,sizeof(a))==0 && listen(server,1)==0);socklen_t length=sizeof(a);assert(getsockname(server,(void*)&a,&length)==0);t.port=ntohs(a.sin_port);
- int client=target_connect(&t);assert(client>=0);int accepted=accept(server,NULL,NULL);assert(accepted>=0);close(accepted);close(client);close(server);
- assert(target_connect(&t)<0);
- puts("PASS: target validation, token retention/removal, private persistence, IPv6 parsing, bounded TCP connect and refusal");return 0;
+ int client=fixture_connect(&t);assert(client>=0);int accepted=accept(server,NULL,NULL);assert(accepted>=0);close(accepted);close(client);close(server);
+ assert(fixture_connect(&t)<0);
+ puts("PASS: target validation, token retention/removal, private persistence, IPv6 parsing, nonblocking socket and refused connection");return 0;
 }

@@ -181,6 +181,10 @@ static void stream_tick(PlaybackJson *j, uint64_t now, bool enabled) {
         stream_close(now);
         return;
     }
+    if (n > 0 && memchr(stream.data + stream.used, 0, (size_t)n)) {
+        stream_close(now);
+        return;
+    }
     if (n > 0)
         stream.used += (size_t)n;
     stream.data[stream.used] = 0;
@@ -189,7 +193,7 @@ static void stream_tick(PlaybackJson *j, uint64_t now, bool enabled) {
         if (!end)
             break;
         *end = 0;
-        void *root = j->parse(stream.data);
+        void *root = playback_parse_exact(j, stream.data);
         if (stream.stage == STREAM_AUTHENTICATING) {
             if (!playback_true(j, root, "success")) {
                 if (root)

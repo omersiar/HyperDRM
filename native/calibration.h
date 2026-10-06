@@ -2,6 +2,7 @@
 #define HYPERDRM_CALIBRATION_H
 #include <math.h>
 #include "playback.h"
+#include "atomic_file.h"
 #define CALIBRATION_PREF                                                                           \
     "/media/developer/apps/usr/palm/services/org.webosbrew.histogramhyperion.service/"             \
     "calibration.json"
@@ -52,7 +53,7 @@ static inline CalibrationKind calibration_effective(void) {
     return calibration_is_g4(tv_model) ? CAL_G4 : CAL_AVERAGE;
 }
 static inline bool calibration_parse(PlaybackJson *j, const char *text, Calibration *result) {
-    void *root = j->parse(text);
+    void *root = playback_parse_exact(j, text);
     if (!root)
         return false;
     Calibration next = *result;
@@ -102,7 +103,17 @@ static inline bool calibration_parse(PlaybackJson *j, const char *text, Calibrat
     return valid;
 }
 static inline bool calibration_save(const char *path, const Calibration *value) {
-    char temp[512], data[2048];
+    if (!value || value->kind < CAL_AUTO || value->kind > CAL_CUSTOM || value->count > 16 ||
+        (value->count && (value->count < 2 || !calibration_model_valid(value->model))))
+        return false;
+    for (unsigned i = 0; i < value->count; i++) {
+        double x = value->points[i].position;
+        if (!isfinite(x) || x < 0 || x >= 4 || value->points[i].region >= 16 ||
+            (i && x <= value->points[i - 1].position))
+            return false;
+    }
+
+    char data[2048];
     int used = snprintf(data, sizeof(data), "{\"profile\":\"%s\"", calibration_key(value->kind));
     if (value->count) {
         used += snprintf(data + used, sizeof(data) - used, ",\"model\":\"%s\",\"points\":[",
@@ -114,19 +125,8 @@ static inline bool calibration_save(const char *path, const Calibration *value) 
         used += snprintf(data + used, sizeof(data) - used, "]");
     }
     used += snprintf(data + used, sizeof(data) - used, "}\n");
-    if (snprintf(temp, sizeof(temp), "%s.tmp", path) >= (int)sizeof(temp))
-        return false;
-    int fd = open(temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (fd < 0)
-        return false;
-    bool ok = write(fd, data, used) == used && fsync(fd) == 0;
-    if (close(fd) != 0)
-        ok = false;
-    if (ok)
-        ok = rename(temp, path) == 0;
-    if (!ok)
-        unlink(temp);
-    return ok;
+    return used > 0 && (size_t)used < sizeof(data) &&
+           atomic_replace(path, data, (size_t)used) != SAVE_UNCHANGED;
 }
 static inline void calibration_load(PlaybackJson *j, const char *path) {
     int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);

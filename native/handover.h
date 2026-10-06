@@ -1,6 +1,7 @@
 #ifndef HYPERDRM_HANDOVER_H
 #define HYPERDRM_HANDOVER_H
 #include "playback.h"
+#include "atomic_file.h"
 #ifndef CALIBRATION_ACTIVE
 #define CALIBRATION_ACTIVE false
 #endif
@@ -43,18 +44,7 @@ static inline bool piccap_installed(void) {
 }
 static bool handover_save(bool enabled) {
     const char *data = enabled ? "{\"piccapHandover\":true}\n" : "{\"piccapHandover\":false}\n";
-    int fd = open(HANDOVER_PREF ".tmp", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (fd < 0)
-        return false;
-    ssize_t n = write(fd, data, strlen(data));
-    bool ok = n == (ssize_t)strlen(data) && fsync(fd) == 0;
-    if (close(fd) != 0)
-        ok = false;
-    if (ok)
-        ok = rename(HANDOVER_PREF ".tmp", HANDOVER_PREF) == 0;
-    if (!ok)
-        unlink(HANDOVER_PREF ".tmp");
-    return ok;
+    return atomic_replace(HANDOVER_PREF, data, strlen(data)) != SAVE_UNCHANGED;
 }
 static void handover_load(void) {
     int fd = open(HANDOVER_PREF, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);

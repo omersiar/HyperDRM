@@ -157,3 +157,36 @@ checks the IPK's embedded metadata, executable architecture, size and SHA-256.
 Package timestamps are deterministic. No TV installation, application launch or
 service restart was performed for this version while the user was watching a film.
 Live LG capture and physical remote validation remain pending for this release.
+
+## Version 0.13.0
+
+The main receiver connection uses nonblocking sockets for connect, login, layout,
+color commands, matching transaction acknowledgements and clear. The synchronous
+connector and send/receive loops were removed from production. Unsent frames
+coalesce and per-tick byte/message budgets and transaction deadlines bound work.
+Stop cancels an in-progress connection and clears pending output asynchronously.
+LG capture initialization itself still depends on synchronous vendor APIs.
+
+Receiver, calibration and PicCap preferences share a private atomic writer with
+unique temporary files, partial/EINTR write handling, file and directory sync,
+rename, symlink rejection and explicit post-commit durability outcomes. Failure
+before rename preserves the previous file; failure syncing the directory after
+commit is logged as uncertain durability rather than incorrectly claiming rollback.
+
+Protocol tests cover fragmented, truncated, malformed, oversized and embedded-NUL
+responses, invalid types, stale transaction IDs, send backpressure, deadlines and
+disconnects. A deterministic 5000-input parser mutation test supplements the fixed
+cases. ASan/UBSan checks include protocol, file replacement, output and a simulated
+full service lifecycle. The latter verifies Start/Stop during connect and responsive
+Status/Stop while an ACK is delayed, with a fake LG capture implementation.
+
+Capture, receiver/layout and calibration session state have explicit contexts;
+bridge and layout-refresh functions receive their contexts directly. Shared LG/Luna
+and persisted calibration/handover state remain scoped to the service. Generated
+UI and native versions must match; settings/startup actions are blocked otherwise,
+while Stop and status remain available. Reload service is an explicit user action,
+never an automatic restart.
+
+All host checks and the ARM package verification pass. No TV connection, install,
+launch or service restart was performed. Real LG capture, flash-filesystem behavior,
+receiver interoperability and physical remote validation remain pending on the TV.

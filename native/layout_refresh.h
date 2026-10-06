@@ -10,16 +10,18 @@ static void layout_refresh_reset(uint64_t due) {
     layout_probe.stage = TEST_IDLE;
     next_layout_check = due;
 }
-static bool layout_mapping_changed(const LedBlend *next, unsigned count) {
-    if (count != led_count || !led_blends)
+static bool layout_mapping_changed(const ReceiverLayoutContext *layout, const LedBlend *next,
+                                   unsigned count) {
+    if (count != layout->count || !layout->blends)
         return true;
     for (unsigned i = 0; i < count; i++)
-        if (next[i].a != led_blends[i].a || next[i].b != led_blends[i].b ||
-            next[i].weight != led_blends[i].weight)
+        if (next[i].a != layout->blends[i].a || next[i].b != layout->blends[i].b ||
+            next[i].weight != layout->blends[i].weight)
             return true;
     return false;
 }
-static void layout_refresh_tick(PlaybackJson *json, uint64_t now, bool running) {
+static void layout_refresh_tick(PlaybackJson *json, uint64_t now, bool running,
+                                ReceiverLayoutContext *layout) {
     if (!running) {
         layout_refresh_reset(now + LAYOUT_REFRESH_MS);
         return;
@@ -27,11 +29,11 @@ static void layout_refresh_tick(PlaybackJson *json, uint64_t now, bool running) 
     probe_tick(&layout_probe, json, now);
     if (layout_probe.stage == TEST_DONE) {
         if (layout_probe_generation == calibration_generation) {
-            if (layout_mapping_changed(layout_probe.mapping, layout_probe.leds)) {
-                free(led_blends);
-                led_blends = layout_probe.mapping;
+            if (layout_mapping_changed(layout, layout_probe.mapping, layout_probe.leds)) {
+                free(layout->blends);
+                layout->blends = layout_probe.mapping;
                 layout_probe.mapping = NULL;
-                led_count = layout_probe.leds;
+                layout->count = layout_probe.leds;
                 layout_updates++;
             }
             last_layout_check = now;

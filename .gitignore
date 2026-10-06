@@ -42,3 +42,8 @@ test-spatial_image
 test-continuity
 test-receiver_stream
 test-source_bridge
+
+test-atomic_file
+test-json_protocol
+test-receiver_output
+test-service_lifecycle

@@ -53,6 +53,7 @@ def verify_package(version):
         for directory, filename in [('applications', 'appinfo.json'), ('packages', 'packageinfo.json')]:
             entry = archive.extractfile(f'usr/palm/{directory}/org.webosbrew.histogramhyperion/{filename}')
             assert json.load(entry)['version'] == version
+        assert archive.extractfile('usr/palm/applications/org.webosbrew.histogramhyperion/version.js').read() == (ROOT / 'app/version.js').read_bytes()
         binary = archive.extractfile('usr/palm/services/org.webosbrew.histogramhyperion.service/histogram-service').read()
         assert binary[:4] == b'\x7fELF' and binary[4] == 1 and binary[18:20] == b'\x28\x00'
         assert version.encode() in binary
@@ -62,6 +63,7 @@ def verify_package(version):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--push', action='store_true')
+    parser.add_argument('--sanitizers', action='store_true', help='Run parser, atomic-save, output and service lifecycle tests with ASan/UBSan')
     options = parser.parse_args()
     version = synchronize()
     run(sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py')
@@ -75,6 +77,12 @@ def main():
         name = '/tmp/hyperdrm-' + test.stem
         linux('gcc', '-Wall', '-Wextra', '-Werror', '-O2', str(test.relative_to(ROOT)).replace('\\', '/'), '-ldl', '-lm', '-o', name)
         linux(name)
+    if options.sanitizers:
+        for name in ('json_protocol', 'atomic_file', 'receiver_output', 'service_lifecycle'):
+            destination = '/tmp/hyperdrm-sanitized-' + name
+            linux('gcc', '-Wall', '-Wextra', '-Werror', '-O1', '-g', '-fsanitize=address,undefined',
+                  'native/test_' + name + '.c', '-ldl', '-lm', '-o', destination)
+            linux(destination)
     linux('arm-linux-gnueabi-gcc', '-Wall', '-Wextra', '-Werror', '-O2', '-rdynamic',
           'native/service.c', '-ldl', '-o', 'service/histogram-service')
     run(sys.executable, 'build_package.py')
