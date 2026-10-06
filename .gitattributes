@@ -10,3 +10,4 @@
 *.ipk binary
 *.mp4 binary
 service/histogram-service binary
+*.sh text eol=lf

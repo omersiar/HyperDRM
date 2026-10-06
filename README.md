@@ -25,7 +25,7 @@ Only the own service is modified. No Hue, LG library, driver or firmware binarie
 
 ## Installation
 
-The current package is [HyperDRM_0.6.0_arm.ipk](HyperDRM_0.6.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.6.1_arm.ipk](HyperDRM_0.6.1_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -41,7 +41,7 @@ The internal app/service IDs remain `org.webosbrew.histogramhyperion` and `org.w
 
 The app's **Autostart: Ein/Aus** switch controls the own hook `/var/lib/webosbrew/init.d/60-histogramhyperion`. Homebrew Channel runs it during boot after service elevation. It retries start while the TV and Hyperion initialize, with up to 120 attempts separated by five seconds. The Homebrew failsafe can suppress boot hooks.
 
-**Stoppen** ends the current capture session and leaves the saved autostart preference unchanged. Turning autostart off removes the own hook and cancels waiting boot attempts. A foreign file or symlink at that path will not be overwritten.
+**Stoppen** ends the current capture session and leaves the saved autostart preference unchanged. The hook is a symlink to `boot.sh` inside the service container. Removal leaves a harmless dangling link; the script also exits when its service target is absent. Turning autostart off removes the own hook and cancels waiting boot attempts. A foreign file or symlink at that path will not be overwritten.
 
 Boot log: `/var/lib/webosbrew/histogramhyperion-boot.log`.
 
@@ -52,6 +52,7 @@ Use an ARM EABI cross-compiler and Python 3:
 ```sh
 arm-linux-gnueabi-gcc -Wall -Wextra -Werror -O2 -rdynamic native/service.c -ldl -o service/histogram-service
 python3 build_package.py
+python3 build_manifest.py
 ```
 
 The package builder bundles only the own app, native executable, metadata and logo assets. A built executable and current IPK are included for the tested platform.
@@ -67,7 +68,7 @@ arm-linux-gnueabi-gcc -Wall -Wextra -Werror -O2 native/test_layout.c -ldl -o tes
 arm-linux-gnueabi-gcc -Wall -Wextra -Werror -O2 native/test_interpolation.c -o test-interpolation
 ```
 
-The tests passed on the G4. Boot-hook invocation started a stopped service; an actual cold boot has not yet been tested. Autostart activation was tested; deactivation is implemented but has not yet been practically tested on the TV.
+The tests passed on the G4. Boot-hook invocation started a stopped service; an actual cold boot has not yet been tested. Isolated ARM tests also cover autostart deactivation, legacy-hook migration, foreign-hook protection and removal of the target container.
 
 `calibration-gradient.mp4` is the own red/green coordinate ramp used for calibration. `spatial-calibration.json` and `spatial-interpolation.json` record the calibration and example layout. The offline mapping scripts require locally obtained `calibration-samples.jsonl` and `serverinfo.json`; these diagnostic snapshots are not distributed. Runtime mapping is implemented in `native/layout.h` and reads the actual Hyperion layout.
 
@@ -76,3 +77,7 @@ To regenerate the test video, install `imageio-ffmpeg` in your Python environmen
 ## Logo
 
 The logo master is `app/logo.png`, with 80 px and 130 px installation icons.
+
+## Publishing status
+
+See [the publishing review](docs/publishing-review.md) for the requirements audit and unresolved submission conditions. This repository is not a claim that webOSbrew has approved the app.

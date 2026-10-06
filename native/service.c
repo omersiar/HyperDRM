@@ -150,7 +150,7 @@ static bool autostart(void *h,void *m,void *ctx){
 static bool status(void *h,void *m,void *ctx){
  (void)ctx;char json[4096],safe[512];size_t n=0;
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
- int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.6.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",capture?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.6.1\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"endpoint\":\"127.0.0.1:19444\",\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",capture?"true":"false",color_valid?"true":"false",frames,PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);
@@ -218,6 +218,7 @@ static int tick(void *unused){
 static void *symbol(void *lib,const char *name){void *s=dlsym(lib,name);if(!s){fprintf(stderr,"Missing symbol %s\n",name);exit(2);}return s;}
 int main(void){
  signal(SIGTERM,quit_signal);signal(SIGINT,quit_signal);
+ if(boot_enabled() && !set_boot(true))fprintf(stderr,"Own legacy boot hook migration failed\n");
  void *vt=dlopen("libvtcapture.so.1",RTLD_NOW),*ls=dlopen("libluna-service2.so.3",RTLD_NOW),*glib=dlopen("libglib-2.0.so.0",RTLD_NOW);
  if(!vt||!ls||!glib){fprintf(stderr,"Missing LG library: %s\n",dlerror());return 2;}
  vt_init=symbol(vt,"vtCapture_initHistogram");vt_preset=symbol(vt,"vtCapture_setPresetHistogram");vt_get=symbol(vt,"vtCapture_getHistogram");vt_finish=symbol(vt,"vtCapture_finalizeHistogram");

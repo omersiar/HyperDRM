@@ -21,3 +21,5 @@ test-interpolation
 test-layout
 service/led-mapping.txt
 service/led-interpolation.txt
+
+test-autostart
