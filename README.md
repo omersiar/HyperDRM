@@ -75,4 +75,4 @@ To regenerate the test video, install `imageio-ffmpeg` in your Python environmen
 
 ## Logo
 
-The logo was generated with the built-in Imagegen tool. The master is `app/logo.png`, with 80 px and 130 px installation icons. The generation prompt is recorded in `logo-prompt.txt`.
+The logo master is `app/logo.png`, with 80 px and 130 px installation icons.
