@@ -136,3 +136,24 @@ symlink were verified. Actual autostart disable/enable requests succeeded, with
 Autostart restored to On. No receiver color correction, WLED configuration or
 PicCap autostart setting was changed. A local browser preview was unavailable
 because the browser policy rejected file URLs; no alternate browser path was used.
+
+## Version 0.12.0
+
+Receiver stream processing now drains complete buffered messages when no new
+bytes arrive. A regression fixture buffers seventeen updates and verifies all
+three processing batches without additional socket writes. Action errors survive
+status polling and are cleared by the next user action. Tests also cover delayed
+calibration replies after cancellation and a new session.
+
+Connection and bridge states are named enums; UI calibration phases and session
+identity checks isolate asynchronous work. The native service is separated into
+runtime bootstrap, Luna actions, calibration, status and capture-loop modules.
+Production C and JavaScript are formatted consistently; include dependency order
+is preserved explicitly.
+
+VERSION generates app/package/runtime versions. release.py passes all JavaScript,
+portable native and Python version-drift tests, cross-compiles the ARM service and
+checks the IPK's embedded metadata, executable architecture, size and SHA-256.
+Package timestamps are deterministic. No TV installation, application launch or
+service restart was performed for this version while the user was watching a film.
+Live LG capture and physical remote validation remain pending for this release.

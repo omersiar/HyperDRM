@@ -22,6 +22,9 @@ const grant=requests.find(r=>r.uri.includes('hbchannel'));assert.deepEqual(grant
 const grantCount=requests.filter(r=>r.uri.includes('hbchannel')).length;
 elements.autostart.onclick();flush();assert(!enabled);assert.equal(requests.filter(r=>r.uri.includes('hbchannel')).length,grantCount);
 uid=1000;deny=true;elements.autostart.onclick();flush();assert(!enabled && !elements.autostart.disabled && !elements.grantRoot.disabled);assert(elements.error.textContent.includes('could not grant root'));
+const retainedError=elements.error.textContent;c.call('status',c.display);assert.equal(elements.error.textContent,retainedError);
+c.showActionError('Invalid receiver settings');c.call('status',c.display);assert.equal(elements.error.textContent,'Invalid receiver settings');
 deny=false;delayRoot=true;elements.grantRoot.onclick();elements.autostart.onclick();assert(pendingRoot && c.rootWaiters.length===2);
 delayRoot=false;pendingRoot.onservicecallback(JSON.stringify({returnValue:true}));flush();assert(enabled && !elements.autostart.disabled && !c.rootWaiters.length);
+assert.equal(c.actionError,'');
 console.log('PASS: root-required autostart repairs only own service, confirms root after restart, retries setting, avoids unnecessary elevation and reports denial');

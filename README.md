@@ -27,7 +27,7 @@ Only the own service is modified. Optional Auto PicCap can configure its receive
 
 ## Installation
 
-The current package is [HyperDRM_0.11.0_arm.ipk](HyperDRM_0.11.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.12.0_arm.ipk](HyperDRM_0.12.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -192,3 +192,20 @@ service, verifies UID 0, and retries the switch. Root and boot-hook failures hav
 separate messages. The explicit launch action `{"action":"repairRoot"}` invokes
 the same visible repair flow. Homebrew Channel must be installed and permit the
 request; denied elevation is reported without changing autostart.
+
+### Development and releases
+
+`VERSION` is the single source for app, package and native runtime versions.
+Run `python sync_version.py` after editing it; `--check` rejects stale metadata.
+Run `python release.py` to execute every JavaScript and portable native test,
+compile the ARM service, build a reproducible IPK and verify its embedded versions,
+ARM architecture, size and SHA-256 against the manifest. On Windows this requires
+Node.js and Debian WSL with GCC, JSON-C and arm-linux-gnueabi-gcc; on Linux the
+same tools must be on PATH. No TV connection or installation occurs.
+
+After reviewing the working tree, `python release.py --push` also commits changes,
+creates a new version tag and atomically pushes main and the tag to origin.
+An existing tag or a branch other than main is rejected. Attach the exact verified
+IPK to the matching Gitea release using an authorized session, then compare the
+downloaded attachment's size and SHA-256. Git access does not authorize web uploads.
+See [runtime architecture](docs/architecture.md) for module boundaries.

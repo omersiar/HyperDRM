@@ -1,11 +1,11 @@
 'use strict';
 const assert=require('assert'),fs=require('fs'),vm=require('vm');
-const elements={},events={},requests=[];let active=false,sequence=0,globalResponse=false;
+const elements={},events={},requests=[];let active=false,sequence=0,globalResponse=false,holdStatus=false,heldStatus=null;
 ['calibrationVideo','cancelCalibration','calibrate','validateCalibration','wizardStatus','customProfile'].forEach(id=>elements[id]={style:{},disabled:false,currentTime:0,textContent:'',value:'',events:{},focus(){},pause(){},play(){return Promise.resolve();},addEventListener(k,f){this.events[k]=f;}});
 const c={profile:'auto',profileDirty:false,targetDirty:false,showProfile(){},display(){},setInterval(){return 1;},clearInterval(){},setTimeout(){},Date,Array,JSON,
  window:{addEventListener(k,f){events[k]=f;}},document:{getElementById(id){return elements[id];},addEventListener(k,f){events[k]=f;}},
  call(method,done,data){
-  requests.push({method,data});if(method==='calibrationSession')active=data.enabled;
+  requests.push({method,data});if(method==='status' && holdStatus){heldStatus=done;return;}if(method==='calibrationSession')active=data.enabled;
   const t=elements.calibrationVideo.currentTime,step=t<4?-1:Math.floor((t-4)/2);
   const regions=Array.from({length:16},(_,r)=>{
    const center=r*2+.5,d=Math.min(Math.abs(step-center),32-Math.abs(step-center));
@@ -29,4 +29,6 @@ c.profileDirty=false;globalResponse=true;measure();assert(elements.wizardStatus.
 globalResponse=false;elements.calibrate.onclick();elements.cancelCalibration.onclick();assert(!active && !c.wizard);
 elements.validateCalibration.onclick();assert.equal(elements.calibrationVideo.currentTime,68);elements.calibrationVideo.events.ended();assert(!active && elements.wizardStatus.textContent.includes('Top-left red'));
 elements.calibrate.onclick();let prevented=false;events.keydown({keyCode:461,preventDefault(){prevented=true;}});assert(prevented && !active);
+elements.calibrate.onclick();holdStatus=true;elements.calibrationVideo.currentTime=1;c.wizardSample();assert(heldStatus);const oldReply=heldStatus;
+elements.cancelCalibration.onclick();holdStatus=false;elements.calibrate.onclick();const newSession=c.wizard;oldReply({returnValue:false,errorText:'Old failure'});assert.strictEqual(c.wizard,newSession);assert(!c.wizard.busy);elements.cancelCalibration.onclick();
 console.log('PASS: guided measurement, proposal without save, invalid-response preservation, validation, cancel/Back and scoped remote navigation');

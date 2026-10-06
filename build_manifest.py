@@ -1,6 +1,8 @@
 """Describe the exact built IPK for Homebrew Channel."""
 import hashlib, json
 from pathlib import Path
+from sync_version import synchronize
+synchronize(check=True)
 ROOT=Path(__file__).resolve().parent
 BASE='https://gitea.adnau.de/matze19999/HyperDRM'
 RAW=BASE+'/raw/branch/main/'

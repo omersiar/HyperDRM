@@ -1,16 +1,18 @@
 """Package own app and executable; no Signify or LG binaries are included."""
-import io, json, tarfile
+import gzip, io, json, tarfile
 from pathlib import Path
+from sync_version import synchronize
+synchronize(check=True)
 ROOT=Path(__file__).resolve().parent
 ID='org.webosbrew.histogramhyperion'
 VERSION=json.loads((ROOT/'app/appinfo.json').read_text(encoding='utf-8'))['version']
 def tar_bytes(entries):
     stream=io.BytesIO()
-    with tarfile.open(fileobj=stream,mode='w:gz') as tar:
+    with tarfile.open(fileobj=stream,mode='w') as tar:
         for name,body,mode in entries:
             info=tarfile.TarInfo(name);info.size=len(body);info.mode=mode;info.mtime=0
             tar.addfile(info,io.BytesIO(body))
-    return stream.getvalue()
+    return gzip.compress(stream.getvalue(), mtime=0)
 entries=[]
 for directory,target in [('app','applications/'+ID),('service','services/'+ID+'.service'),('package','packages/'+ID)]:
     for path in sorted((ROOT/directory).iterdir()):
