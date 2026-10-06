@@ -33,3 +33,5 @@ test-target
 tests/receiver-proxy.log
 
 test-spatial-image
+
+test-diagnostics

@@ -11,12 +11,15 @@
 #include <unistd.h>
 #include "playback.h"
 #define TARGET_PREF "/media/developer/apps/usr/palm/services/org.webosbrew.histogramhyperion.service/target.json"
-typedef struct {char host[46],receiver[16],token[257];unsigned port;} TargetConfig;
-static TargetConfig target={.host="127.0.0.1",.receiver="Hyperion",.port=19444};
+typedef struct {char host[46],receiver[16],token[257];unsigned port,piccap_port;} TargetConfig;
+static TargetConfig target={.host="127.0.0.1",.receiver="Hyperion",.port=19444,.piccap_port=19400};
 static inline bool target_piccap_local(const TargetConfig *t){return t->port==19444 && (!strcmp(t->host,"127.0.0.1") || !strcmp(t->host,"::1"));}
+static inline bool target_piccap_compatible(const TargetConfig *t){unsigned char address[4];return !strcmp(t->host,"::1") || inet_pton(AF_INET,t->host,address)==1;}
+static inline const char *target_piccap_host(const TargetConfig *t){return !strcmp(t->host,"::1")?"127.0.0.1":t->host;}
 static bool target_valid(const TargetConfig *t){
  unsigned char address[16];
  if(inet_pton(AF_INET,t->host,address)!=1 && inet_pton(AF_INET6,t->host,address)!=1)return false;
+ if(!t->piccap_port || t->piccap_port>65535)return false;
  if(!t->port || t->port>65535 || (strcmp(t->receiver,"Hyperion") && strcmp(t->receiver,"HyperHDR")))return false;
  for(const unsigned char *p=(const unsigned char*)t->token;*p;p++)
   if(!((*p>='a'&&*p<='z')||(*p>='A'&&*p<='Z')||(*p>='0'&&*p<='9')||*p=='-'||*p=='_'||*p=='.'))return false;
@@ -37,6 +40,11 @@ static bool target_parse(PlaybackJson *j,const char *text,TargetConfig *out){
  void *port=playback_field(j,root,"port");
  if(!port || j->type(port)!=3)valid=false;
  else {char *end=NULL;errno=0;long n=strtol(j->string(port),&end,10);if(errno || !end || *end || n<1 || n>65535)valid=false;else next.port=(unsigned)n;}
+ void *flat=NULL;
+ if(j->type(root)==4 && j->get(root,"piccapPort",&flat)){
+  if(j->type(flat)!=3)valid=false;
+  else {char *end=NULL;errno=0;long n=strtol(j->string(flat),&end,10);if(errno || !end || *end || n<1 || n>65535)valid=false;else next.piccap_port=(unsigned)n;}
+ }
  void *clear=playback_field(j,root,"clearToken");
  if(clear){if(j->type(clear)!=1)valid=false;else if(j->boolean(clear))next.token[0]=0;}
  valid=valid && target_valid(&next);j->put(root);if(valid)*out=next;return valid;
@@ -44,7 +52,7 @@ static bool target_parse(PlaybackJson *j,const char *text,TargetConfig *out){
 static bool target_save(const char *path,const TargetConfig *t){
  if(!target_valid(t))return false;
  char tmp[512],data[512];if(snprintf(tmp,sizeof(tmp),"%s.tmp",path)>=(int)sizeof(tmp))return false;
- int n=snprintf(data,sizeof(data),"{\"host\":\"%s\",\"port\":%u,\"receiver\":\"%s\",\"token\":\"%s\"}\n",t->host,t->port,t->receiver,t->token);
+ int n=snprintf(data,sizeof(data),"{\"host\":\"%s\",\"port\":%u,\"piccapPort\":%u,\"receiver\":\"%s\",\"token\":\"%s\"}\n",t->host,t->port,t->piccap_port,t->receiver,t->token);
  int fd=open(tmp,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(fd<0)return false;
  bool ok=write(fd,data,n)==n && fsync(fd)==0;if(close(fd)!=0)ok=false;
  if(ok)ok=rename(tmp,path)==0;
@@ -56,7 +64,7 @@ static bool target_load(PlaybackJson *j,const char *path,TargetConfig *t){
  char data[1024];ssize_t n=read(fd,data,sizeof(data)-1);close(fd);if(n<=0 || n==(ssize_t)sizeof(data)-1)return false;
  data[n]=0;return target_parse(j,data,t);
 }
-static int target_connect(const TargetConfig *t){
+static int target_open(const TargetConfig *t){
  if(!target_valid(t))return -1;
  struct sockaddr_storage storage={0};socklen_t length;int family;
  struct sockaddr_in *v4=(void*)&storage;struct sockaddr_in6 *v6=(void*)&storage;
@@ -66,10 +74,15 @@ static int target_connect(const TargetConfig *t){
  int flags=fcntl(fd,F_GETFL,0);if(flags<0 || fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0){close(fd);return -1;}
  if(connect(fd,(void*)&storage,length)!=0){
   if(errno!=EINPROGRESS){close(fd);return -1;}
-  struct pollfd p={.fd=fd,.events=POLLOUT};int error=0;socklen_t size=sizeof(error);
-  if(poll(&p,1,1000)<=0 || getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&size)!=0 || error){close(fd);return -1;}
  }
- if(fcntl(fd,F_SETFL,flags)<0){close(fd);return -1;}
+ return fd;
+}
+static int target_connect(const TargetConfig *t){
+ int fd=target_open(t);if(fd<0)return -1;
+ struct pollfd p={.fd=fd,.events=POLLOUT};int error=0;socklen_t size=sizeof(error);
+ if(poll(&p,1,1000)<=0 || getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&size)!=0 || error){close(fd);return -1;}
+ int flags=fcntl(fd,F_GETFL,0);
+ if(flags<0 || fcntl(fd,F_SETFL,flags & ~O_NONBLOCK)<0){close(fd);return -1;}
  struct timeval timeout={1,0};setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
  return fd;
 }

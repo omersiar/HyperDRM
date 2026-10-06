@@ -5,12 +5,17 @@
 #include "target.h"
 int main(void){
  PlaybackJson j={0};assert(playback_json_init(&j));TargetConfig t=target;
- assert(target_valid(&t));assert(target_piccap_local(&t));
+ assert(target_valid(&t));assert(t.piccap_port==19400);assert(target_piccap_local(&t));
  assert(target_parse(&j,"{\"host\":\"10.1.0.91\",\"port\":19445,\"receiver\":\"HyperHDR\",\"token\":\"test-token\"}",&t));
  assert(t.port==19445 && !strcmp(t.receiver,"HyperHDR") && !strcmp(t.token,"test-token"));assert(!target_piccap_local(&t));
  assert(target_parse(&j,"{\"host\":\"::1\",\"port\":65535,\"receiver\":\"Hyperion\"}",&t));assert(!strcmp(t.token,"test-token"));
  const char *bad[]={"{}","[]","{\"host\":\"localhost\",\"port\":19444,\"receiver\":\"HyperHDR\"}","{\"host\":\"127.0.0.1\",\"port\":0,\"receiver\":\"HyperHDR\"}","{\"host\":\"127.0.0.1\",\"port\":65536,\"receiver\":\"HyperHDR\"}","{\"host\":\"127.0.0.1\",\"port\":19444.5,\"receiver\":\"HyperHDR\"}","{\"host\":\"127.0.0.1\",\"port\":\"19444\",\"receiver\":\"HyperHDR\"}","{\"host\":\"127.0.0.1\",\"port\":19444,\"receiver\":\"Other\"}","{\"host\":\"127.0.0.1\",\"port\":19444,\"receiver\":\"HyperHDR\",\"token\":\"bad\\\"token\"}"};
  for(unsigned i=0;i<sizeof(bad)/sizeof(*bad);i++){TargetConfig before=t;assert(!target_parse(&j,bad[i],&t));assert(!memcmp(&t,&before,sizeof(t)));}
+ assert(target_parse(&j,"{\"host\":\"127.0.0.1\",\"port\":19444,\"piccapPort\":65535,\"receiver\":\"HyperHDR\"}",&t));assert(t.piccap_port==65535);
+ assert(!target_parse(&j,"{\"host\":\"127.0.0.1\",\"port\":19444,\"piccapPort\":0,\"receiver\":\"HyperHDR\"}",&t));assert(t.piccap_port==65535);
+ assert(target_parse(&j,"{\"host\":\"::1\",\"port\":65535,\"receiver\":\"HyperHDR\"}",&t));assert(t.piccap_port==65535);
+ assert(!target_parse(&j,"{\"host\":\"127.0.0.1\",\"port\":19444,\"piccapPort\":null,\"receiver\":\"HyperHDR\"}",&t));
+ TargetConfig v6=t;strcpy(v6.host,"2001:db8::1");assert(!target_piccap_compatible(&v6));strcpy(v6.host,"::1");assert(target_piccap_compatible(&v6) && !strcmp(target_piccap_host(&v6),"127.0.0.1"));
  const char *file="/tmp/hyperdrm-target-test.json";assert(access(file,F_OK)!=0);assert(access("/tmp/hyperdrm-target-test.json.tmp",F_OK)!=0);
  assert(target_save(file,&t));struct stat st;assert(stat(file,&st)==0 && (st.st_mode&0777)==0600);
  TargetConfig restored=target;assert(target_load(&j,file,&restored));assert(!strcmp(restored.host,"::1") && restored.port==65535 && !strcmp(restored.token,"test-token"));
