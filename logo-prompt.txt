@@ -1,0 +1,4 @@
+Tool: built-in image_gen
+Transparent background: false
+Prompt:
+Create a polished square app logo icon for HyperDRM, an ambient television lighting app for webOS and Hyperion. One bold minimalist emblem: a front-facing television rectangle with a subtle stylized H incorporated into its dark screen, surrounded by a continuous luminous multicolor halo transitioning cyan blue violet magenta orange. Dark midnight navy solid background, clean geometric contours, premium modern technology brand, balanced centered composition with generous safe margins, recognizable at 80x80 pixels. Flat crisp graphic with restrained soft light glow, no photorealistic scene, no locks, no keys, no text or wordmark, no watermarks. Single icon fills square canvas.
