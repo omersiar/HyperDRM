@@ -25,6 +25,7 @@
 #include "autostart.h"
 #include "retry.h"
 #include "target.h"
+#include "spatial_image.h"
 #define SERVICE "org.webosbrew.histogramhyperion.service"
 #define PRIORITY 149
 typedef struct {int code;char *message;const char *file;int line;const char *func;void *padding;unsigned long magic;} LSError;
@@ -196,7 +197,7 @@ static bool status(void *h,void *m,void *ctx){
  (void)ctx;char json[4096],safe[512],endpoint[80];size_t n=0;
  snprintf(endpoint,sizeof(endpoint),strchr(target.host,':')?"[%s]:%u":"%s:%u",target.host,target.port);
  for(size_t i=0;last_error[i] && n+2<sizeof(safe);i++){char c=last_error[i];if(c=='"'||c=='\\')safe[n++]='\\';if((unsigned char)c>=32)safe[n++]=c;}safe[n]=0;
- int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.8.0\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"%s\",\"host\":\"%s\",\"port\":%u,\"receiver\":\"%s\",\"tokenSet\":%s,\"piccapTargetCompatible\":%s,\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,endpoint,target.host,target.port,target.receiver,target.token[0]?"true":"false",target_piccap_local(&target)?"true":"false",PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
+ int used=snprintf(json,sizeof(json),"{\"returnValue\":true,\"version\":\"0.8.1\",\"running\":%s,\"colorValid\":%s,\"frames\":%lu,\"captureRecoveries\":%u,\"lastRecoveryMs\":%llu,\"endpoint\":\"%s\",\"host\":\"%s\",\"port\":%u,\"receiver\":\"%s\",\"tokenSet\":%s,\"piccapTargetCompatible\":%s,\"priority\":%d,\"uid\":%u,\"drmVerified\":false,\"mappingVerified\":false,\"outputColor\":[%u,%u,%u],\"error\":\"%s\",\"regions\":[",(capture||capture_source==SOURCE_PICCAP)?"true":"false",color_valid?"true":"false",frames,capture_recoveries,(unsigned long long)last_recovery_ms,endpoint,target.host,target.port,target.receiver,target.token[0]?"true":"false",target_piccap_local(&target)?"true":"false",PRIORITY,(unsigned)geteuid(),sent_rgb[0],sent_rgb[1],sent_rgb[2],safe);
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s[%u,%u,%u]",i?",":"",rgb[i][0],rgb[i][1],rgb[i][2]);
  used+=snprintf(json+used,sizeof(json)-used,"],\"ledCount\":%u,\"spatialOutput\":%s,\"blackPercent\":[",led_count,led_count?"true":"false");
  for(int i=0;i<16;i++)used+=snprintf(json+used,sizeof(json)-used,"%s%u",i?",":"",black_percent[i]);
@@ -246,8 +247,10 @@ static int tick(void *unused){
  }
  for(int c=0;c<3;c++)sent_rgb[c]=(unsigned char)(aggregate[c]/16);
  unsigned char boosted_mean[3];boost_color(sent_rgb,boosted_mean);memcpy(sent_rgb,boosted_mean,3);
- size_t capacity=256+(size_t)led_count*12;char *line=malloc(capacity);
+ bool image_output=strcmp(target.receiver,"HyperHDR")==0;
+ size_t capacity=256+(size_t)led_count*12;char *line=image_output?spatial_image_command(rgb,PRIORITY):malloc(capacity);
  if(!line){set_error("Color buffer allocation failed");stop_capture();return 1;}
+ if(!image_output){
  size_t written=(size_t)snprintf(line,capacity,"{\"command\":\"color\",\"priority\":%d,\"duration\":1500,\"origin\":\"HyperDRM\",\"color\":[",PRIORITY);
  for(unsigned i=0;i<led_count;i++){
   unsigned char interpolated[3],boosted[3];LedBlend blend=led_blends[i];
@@ -255,6 +258,7 @@ static int tick(void *unused){
   written+=(size_t)snprintf(line+written,capacity-written,"%s%u,%u,%u",i?",":"",boosted[0],boosted[1],boosted[2]);
  }
  snprintf(line+written,capacity-written,"]}\n");
+ }
  int failed=send_line(line);free(line);
  if(failed){set_error("Receiver connection lost");stop_capture();return 1;}
  char answer[4096];size_t used=0;bool complete=false;

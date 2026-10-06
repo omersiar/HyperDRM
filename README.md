@@ -17,7 +17,7 @@ Ambient Light for webOS, Hyperion and HyperHDR. An own webOS app and native ARM 
 
 Tested on a rooted LG G4 with webOS 24, Homebrew Channel and Hyperion 2.0.16 and HyperHDR 22.0.0 tested on the TV. The native service requires root elevation and the TV's existing `libvtcapture`, Luna, GLib and JSON-C libraries. Other TV models or firmware versions have not been validated.
 
-DRM playback color output was confirmed on the test TV. Support depends on LG's capture implementation; this does not guarantee support on other devices or apps. HyperDRM transmits colors, not captured video frames. The video preview in Hyperion therefore does not show the TV picture.
+DRM playback color output was confirmed on the test TV. Support depends on LG's capture implementation; this does not guarantee support on other devices or apps. HyperDRM transmits colors, not captured video frames. The video preview does not show the TV picture. HyperHDR may show a generated histogram color plane instead.
 
 The 16 histogram samples are independent measurements; interpolation produces smoother transitions without adding independently captured detail. Sample positions are approximate G4 calibration values. Top/bottom bar detection is supported; side bars, arbitrary bar thickness and HDR color calibration remain limited.
 
@@ -25,7 +25,7 @@ Only the own service is modified. Optional Auto PicCap can start and stop the in
 
 ## Installation
 
-The current package is [HyperDRM_0.8.0_arm.ipk](HyperDRM_0.8.0_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.8.1_arm.ipk](HyperDRM_0.8.1_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -102,7 +102,7 @@ LG may revoke histogram capture during playback transitions. From 0.7.1, HyperDR
 
 ## Hyperion and HyperHDR receiver settings
 
-Choose **Receiver: Hyperion/HyperHDR**, enter an IPv4 or IPv6 address and the JSON TCP port, then select **Save receiver**. These receivers use the same color, clear and serverinfo commands. Use the JSON port (usually 19444), not the FlatBuffer port (usually 19400) or web interface port. Numeric IP addresses are supported; hostnames and scoped IPv6 addresses are not currently accepted. Layout and LED count come from the selected receiver, including remote receivers.
+Choose **Receiver: Hyperion/HyperHDR**, enter an IPv4 or IPv6 address and the JSON TCP port, then select **Save receiver**. Hyperion uses per-LED JSON color arrays; HyperHDR uses a synthetic spatial RGB image because HyperHDR 22 treats the color command as a solid color. Both use clear and serverinfo. Use the JSON port (usually 19444), not the FlatBuffer port (usually 19400) or web interface port. Numeric IP addresses are supported; hostnames and scoped IPv6 addresses are not currently accepted. Layout and LED count come from the selected receiver, including remote receivers.
 
 Settings are saved in `target.json` inside the own service container and loaded after service restart/boot. Saving valid settings switches a running session to the new receiver and clears the own priority at the old receiver. Invalid settings leave the current target intact. Saving while manually stopped does not start a session. Uninstalling removes the saved settings with the container.
 
@@ -111,3 +111,9 @@ For a receiver requiring authentication, enter its API token. The token file is 
 Auto PicCap remains available for the default local receiver at 127.0.0.1/::1:19444. For custom targets, automatic PicCap capture is paused and HyperDRM supplies colors for all playback; the PicCap preference remains saved. PicCap has a separate FlatBuffer endpoint managed by its own app, which HyperDRM does not rewrite.
 
 `native/test_target.c` verifies validation, token retention/removal, private persistence and TCP connection/refusal. `tests/receiver-proxy.py` is a test-only relay with synthetic token login and fragmented replies. Local HyperHDR 22.0.0 and a remote relay using a different IP/port were tested on the G4; the relay forwarded real color updates to HyperHDR without changing its configuration.
+
+## HyperHDR spatial output (0.8.1)
+
+HyperHDR 22's JSON `color` handler ultimately registers only the first RGB triplet as a solid color. Version 0.8.1 uses JSON `image` output for the HyperHDR receiver selection. A cached 160x90 geometry interpolates the calibrated histogram samples into a synthetic color plane; HyperHDR applies its configured LED rectangles to that plane. The payload contains generated colors, not captured or decrypted video frames. HyperHDR's image processing and color calibration affect the resulting LED colors. Select a spatial image mapping mode in HyperHDR; a global single-color mapping mode will still give uniform LEDs.
+
+Hyperion retains its original per-LED color-array output. Receiver IP, JSON port, optional token, priority, timeout and reconnection behavior remain shared. Tests cover exact RGB base64 encoding, image command metadata and spatial edge variation. Output must be verified through the receiver's LED stream, not solely a successful command acknowledgment.

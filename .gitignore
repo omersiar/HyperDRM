@@ -31,3 +31,5 @@ test-handover
 
 test-target
 tests/receiver-proxy.log
+
+test-spatial-image

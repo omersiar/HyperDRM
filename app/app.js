@@ -28,7 +28,7 @@ function display(result){
  }
  if(result.piccapHandover)document.getElementById('status').textContent+=' · HyperDRM · '+result.playbackProtection;
  if(result.piccapHandover && !result.piccapTargetCompatible)document.getElementById('status').textContent+=' · Auto PicCap paused for custom target';
- if(result.colorValid)document.getElementById('status').textContent+=result.spatialOutput?' · '+result.ledCount+' LEDs from 16 color regions':' · Output RGB: '+result.outputColor.join(', ');
+ if(result.colorValid)document.getElementById('status').textContent+=result.spatialOutput?' · '+result.ledCount+' LEDs from 16 color regions'+(result.receiver==='HyperHDR'?' · Spatial image output':''):' · Output RGB: '+result.outputColor.join(', ');
  else if(result.returnValue!==false)document.getElementById('status').textContent+=' · No current color output';
  if(result.blackBarDetection && result.running)document.getElementById('status').textContent+=result.letterboxDetected?' · Top/bottom black bars detected':' · Full-screen capture';
  if(result.spatialInterpolation)document.getElementById('status').textContent+=' · Smooth color transitions';
