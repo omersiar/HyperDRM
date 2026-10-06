@@ -33,6 +33,8 @@ Elevate the installed own service through Homebrew Channel:
 luna-send -n 1 luna://org.webosbrew.hbchannel.service/elevateService '{"id":"org.webosbrew.histogramhyperion.service"}'
 ```
 
+Perform elevation before first opening the app or calling its service. If the service was already started without root, elevation updates its launch permissions but does not restart the existing process: terminate only the own `histogram-service` process (verify its executable path first), then reopen the app or call start again. Closing the UI alone does not terminate the native service.
+
 Open **HyperDRM** on the TV and select **Starten**. Hyperion's JSON server must be enabled on port 19444. The existing Hyperion LED device/output configuration remains responsible for controlling the hardware.
 
 The internal app/service IDs remain `org.webosbrew.histogramhyperion` and `org.webosbrew.histogramhyperion.service` so existing installations and the autostart hook remain compatible. Hyperion displays the source as **HyperDRM**. After changing the LED layout, restart the service.
@@ -68,7 +70,7 @@ arm-linux-gnueabi-gcc -Wall -Wextra -Werror -O2 native/test_layout.c -ldl -o tes
 arm-linux-gnueabi-gcc -Wall -Wextra -Werror -O2 native/test_interpolation.c -o test-interpolation
 ```
 
-The tests passed on the G4. Boot-hook invocation started a stopped service; an actual cold boot has not yet been tested. Isolated ARM tests also cover autostart deactivation, legacy-hook migration, foreign-hook protection and removal of the target container.
+The tests passed on the G4. Boot-hook invocation started a stopped service; an actual cold boot has not yet been tested. A real uninstall/reinstall cycle was tested on the G4: containers and running process were removed, the dangling startup link did not execute, and fresh installation plus root elevation and service restart restored color output. Isolated ARM tests also cover autostart deactivation, legacy-hook migration, foreign-hook protection and removal of the target container.
 
 `calibration-gradient.mp4` is the own red/green coordinate ramp used for calibration. `spatial-calibration.json` and `spatial-interpolation.json` record the calibration and example layout. The offline mapping scripts require locally obtained `calibration-samples.jsonl` and `serverinfo.json`; these diagnostic snapshots are not distributed. Runtime mapping is implemented in `native/layout.h` and reads the actual Hyperion layout.
 

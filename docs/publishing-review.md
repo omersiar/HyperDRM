@@ -27,4 +27,17 @@ Public repository page and raw README access were verified without credentials (
 
 ## Evidence and remaining checks
 
-G4/webOS 24: original capture, spatial output, color boost, dynamic layout tests (50/500), black-bar classification and boot-hook invocation tested. Other models are unsupported until tested. Autostart symlink enable/disable, exact legacy migration, rejection of foreign files/symlinks, temporary-file collision and missing-target removal passed in an isolated ARM test on the TV. Version 0.6.1 was installed and started on the G4; the existing copied production hook migrated to the correct container symlink. Boot script syntax passed on the TV. Actual cold boot and clean-state installation/removal have not yet been demonstrated. Public listing eligibility remains pending human and DRM review, release URL validation and licence choice. The runtime reports Rockhopper 10.2.2-57 and device SoC o24; these measured values are used for the package requirements rather than an unverified minimum release.
+G4/webOS 24: original capture, spatial output, color boost, dynamic layout tests (50/500), black-bar classification and boot-hook invocation tested. Other models are unsupported until tested. Autostart symlink enable/disable, exact legacy migration, rejection of foreign files/symlinks, temporary-file collision and missing-target removal passed in an isolated ARM test on the TV. Version 0.6.1 was installed and started on the G4; the existing copied production hook migrated to the correct container symlink. Boot script syntax passed on the TV. Actual cold boot remains untested. A real uninstall and clean-state reinstall were performed on 2026-10-06; details follow below. Public listing eligibility remains pending human and DRM review, release URL validation and licence choice. The runtime reports Rockhopper 10.2.2-57 and device SoC o24; these measured values are used for the package requirements rather than an unverified minimum release.
+
+## Actual uninstall/reinstall test (2026-10-06)
+
+Platform: LG G4, Rockhopper 10.2.2-57, SoC o24. Package: HyperDRM 0.6.1.
+
+- Removed the running app through `com.webos.appInstallService/dev/remove`; installer reported `removed`, progress 100. Both app and service containers disappeared and the native process stopped.
+- The own startup symlink became dangling. Homebrew run-parts dry-run reported the missing target and did not list it among executable hooks. This produces a diagnostic line, rather than executing an orphaned script.
+- A saved copy of the own script, invoked with its installed target absent, exited 0 immediately. The boot log hash was unchanged.
+- Removed only the verified own dangling symlink for a fresh-state test. Reinstallation reported `update:false`. Before root elevation, status showed running:false, autostart:false and a non-root UID.
+- Root elevation after that first status call did not replace the already-running unprivileged service process. Start failed explicitly rather than creating the developer marker. Verified the exact own process path and terminated that process with SIGTERM; the next activation started as root and color output succeeded. Installation instructions now require elevation before first activation and explain this recovery case.
+- Restored the user's enabled autostart setting. No Hyperion configuration, PicCap or foreign hook was changed.
+
+This is an actual package lifecycle test, not a TV factory reset and not a cold boot.
