@@ -26,7 +26,7 @@ int main(void){
  assert(letterbox_candidate(thin_black,thin_color)==-1);
  memset(thin_color,100,sizeof(thin_color));
  assert(letterbox_candidate(thin_black,thin_color)!=1);
- memset(thin_black,15,sizeof(thin_black));
+ for(unsigned i=0;i<16;i++)thin_black[i]=15;
  assert(letterbox_candidate(thin_black,thin_color)!=1);
  puts("PASS: measured wide/thin bars, full frame, one-sided/isolated edges, dark frame and low contrast");
 }

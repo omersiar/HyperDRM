@@ -15,10 +15,14 @@
     "/media/developer/apps/usr/palm/services/org.webosbrew.histogramhyperion.service/target.json"
 typedef struct {
     char host[46], receiver[16], token[257];
-    unsigned port, piccap_port;
+    unsigned port, piccap_port, capture_interval;
 } TargetConfig;
 static TargetConfig target = {
-    .host = "127.0.0.1", .receiver = "Hyperion", .port = 19444, .piccap_port = 19400};
+    .host = "127.0.0.1", .receiver = "Hyperion", .port = 19444, .piccap_port = 19400,
+    .capture_interval = 50};
+static inline unsigned target_capture_interval(const TargetConfig *t) {
+    return t->capture_interval ? t->capture_interval : 50;
+}
 static inline bool target_piccap_local(const TargetConfig *t) {
     return t->port == 19444 && (!strcmp(t->host, "127.0.0.1") || !strcmp(t->host, "::1"));
 }
@@ -31,6 +35,9 @@ static inline const char *target_piccap_host(const TargetConfig *t) {
 }
 static bool target_valid(const TargetConfig *t) {
     unsigned char address[16];
+    unsigned interval = target_capture_interval(t);
+    if (interval < 25 || interval > 1000 || interval % 25)
+        return false;
     if (inet_pton(AF_INET, t->host, address) != 1 && inet_pton(AF_INET6, t->host, address) != 1)
         return false;
     if (!t->piccap_port || t->piccap_port > 65535)
@@ -97,6 +104,20 @@ static bool target_parse(PlaybackJson *j, const char *text, TargetConfig *out) {
                 next.piccap_port = (unsigned)n;
         }
     }
+    void *interval = NULL;
+    if (j->type(root) == 4 && j->get(root, "captureIntervalMs", &interval)) {
+        if (j->type(interval) != 3)
+            valid = false;
+        else {
+            char *end = NULL;
+            errno = 0;
+            long n = strtol(j->string(interval), &end, 10);
+            if (errno || !end || *end || n < 25 || n > 1000 || n % 25)
+                valid = false;
+            else
+                next.capture_interval = (unsigned)n;
+        }
+    }
     void *clear = playback_field(j, root, "clearToken");
     if (clear) {
         if (j->type(clear) != 1)
@@ -116,8 +137,8 @@ static bool target_save(const char *path, const TargetConfig *t) {
     char data[512];
     int n = snprintf(
         data, sizeof(data),
-        "{\"host\":\"%s\",\"port\":%u,\"piccapPort\":%u,\"receiver\":\"%s\",\"token\":\"%s\"}\n",
-        t->host, t->port, t->piccap_port, t->receiver, t->token);
+        "{\"host\":\"%s\",\"port\":%u,\"piccapPort\":%u,\"receiver\":\"%s\",\"token\":\"%s\",\"captureIntervalMs\":%u}\n",
+        t->host, t->port, t->piccap_port, t->receiver, t->token, target_capture_interval(t));
     return n > 0 && (size_t)n < sizeof(data) &&
            atomic_replace(path, data, (size_t)n) != SAVE_UNCHANGED;
 }

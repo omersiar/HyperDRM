@@ -270,7 +270,7 @@ int main(void) {
     service_handle = handle;
     if (!boot_enabled())
         retry_pause(&retries);
-    timer(100, tick, NULL);
+    timer(25, tick, NULL);
     while (!quitting) {
         iterate(NULL, 0);
         usleep(10000);

@@ -38,11 +38,12 @@ nav{border-bottom:1px solid #456185;padding-bottom:10px;margin-bottom:18px}nav b
 <div id="hostField" class="field" tabindex="0" role="button" aria-label="IP address, press OK to edit"><label>IP address<input id="host" tabindex="-1" readonly type="text" maxlength="45" value="127.0.0.1" spellcheck="false"></label></div>
 <div id="portField" class="field narrow" tabindex="0" role="button" aria-label="JSON port, press OK to edit"><label>JSON port<input id="port" tabindex="-1" readonly type="number" min="1" max="65535" value="19444"></label></div>
 <div id="piccapPortField" class="field narrow" tabindex="0" role="button" aria-label="FlatBuffer port, press OK to edit"><label>PicCap FlatBuffer port<input id="piccapPort" tabindex="-1" readonly type="number" min="1" max="65535" value="19400"></label></div>
+<div id="captureIntervalField" class="field narrow" tabindex="0" role="button" aria-label="Capture interval in milliseconds, press OK to edit"><label>Capture interval (ms)<input id="captureInterval" tabindex="-1" readonly type="number" min="25" max="1000" step="25" value="50"></label></div>
 <div id="tokenField" class="field" tabindex="0" role="button" aria-label="API token, press OK to edit"><label>API token (optional)<input id="token" tabindex="-1" readonly type="password" maxlength="256" autocomplete="off"></label></div>
 </div>
 <label><input id="clearToken" type="checkbox"> Remove saved token</label>
 <div><button id="saveTarget" class="primary">Save receiver</button><button id="testConnection">Test connection</button></div><p id="testResult" role="status">Connection test: Not tested</p>
-<p><small>The JSON TCP port is usually 19444. Leave the token blank to keep the saved token. Saving updates the current session.</small></p>
+<p><small>The JSON TCP port is usually 19444. Leave the token blank to keep the saved token. Saving updates the current session. Histogram capture defaults to 50 ms; choose 25–1000 ms in steps of 25. Lower values reduce latency and increase TV load. PicCap uses its own capture rate.</small></p>
 <p id="piccapTargetHint"><small>Auto PicCap uses the same IP and its FlatBuffer port, usually 19400. Enable the receiver's FlatBuffer server. Remote IPv6 uses HyperDRM.</small></p></fieldset>
 </section>
 <section id="calibrationPanel" aria-label="TV calibration" style="display:none">

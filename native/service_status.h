@@ -61,10 +61,10 @@ static bool status(void *h, void *m, void *ctx) {
                      CALIBRATION_ACTIVE ? "true" : "false");
     used +=
         snprintf(json + used, sizeof(json) - used,
-                 "\"returnValue\":true,\"piccapPort\":%u,\"connectionTest\":{\"state\":\"%s\","
+                 "\"returnValue\":true,\"captureIntervalMs\":%u,\"piccapPort\":%u,\"connectionTest\":{\"state\":\"%s\","
                  "\"ledCount\":%u,\"elapsedMs\":%llu,\"error\":\"%s\"},\"lastOutputAgeMs\":%"
                  "lld,\"retryInMs\":%llu,\"captureState\":\"%s\",\"piccapError\":\"%s\",",
-                 target.piccap_port, test_stage_name(), connection_test.leds,
+                 target_capture_interval(&target), target.piccap_port, test_stage_name(), connection_test.leds,
                  (unsigned long long)connection_test.elapsed, connection_test.error,
                  capture_ctx.last_output_at ? (long long)(now - capture_ctx.last_output_at) : -1,
                  (unsigned long long)(retries.due > now ? retries.due - now : 0),

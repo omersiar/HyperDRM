@@ -125,6 +125,7 @@ function display(result) {
         document.getElementById('host').value = result.host;
         document.getElementById('port').value = result.port;
         document.getElementById('piccapPort').value = result.piccapPort || 19400;
+        document.getElementById('captureInterval').value = result.captureIntervalMs || 50;
         receiver = result.receiver;
         document.getElementById('receiver').textContent = 'Receiver: ' + receiver;
     }
@@ -298,7 +299,7 @@ document.getElementById('handover').onclick = function() {
         enabled: button.getAttribute('aria-checked') !== 'true'
     });
 };
-['host', 'port', 'piccapPort', 'token', 'clearToken'].forEach(function(id) {
+['host', 'port', 'piccapPort', 'captureInterval', 'token', 'clearToken'].forEach(function(id) {
     document.getElementById(id).addEventListener('input', function() {
         targetDirty = true;
     });
@@ -320,7 +321,13 @@ document.getElementById('saveTarget').onclick = function() {
         showActionError('PicCap FlatBuffer port must be an integer from 1 to 65535.');
         return;
     }
+    var interval = Number(document.getElementById('captureInterval').value);
+    if (!Number.isInteger(interval) || interval < 25 || interval > 1000 || interval % 25) {
+        showActionError('Capture interval must be 25–1000 ms in steps of 25.');
+        return;
+    }
     var settings = {
+        captureIntervalMs: interval,
         piccapPort: flatPort,
         host: document.getElementById('host').value.trim(),
         port: port,
@@ -393,6 +400,6 @@ document.getElementById('editProfile').onclick = function() {
     showProfile();
     if (advancedProfile) document.getElementById('customProfileField').focus();
 };
-setupRemoteNavigation(['overviewTab', 'receiverTab', 'calibrationTab', 'reloadService', 'grantRoot', 'start', 'stop', 'refresh', 'autostart', 'handover', 'calibrationShortcut', 'receiver', 'hostField', 'portField', 'piccapPortField', 'tokenField', 'clearToken', 'saveTarget', 'testConnection', 'calibrate', 'validateCalibration', 'profile', 'saveProfile', 'editProfile', 'customProfileField', 'cancelCalibration'].map(function(id) {
+setupRemoteNavigation(['overviewTab', 'receiverTab', 'calibrationTab', 'reloadService', 'grantRoot', 'start', 'stop', 'refresh', 'autostart', 'handover', 'calibrationShortcut', 'receiver', 'hostField', 'portField', 'piccapPortField', 'captureIntervalField', 'tokenField', 'clearToken', 'saveTarget', 'testConnection', 'calibrate', 'validateCalibration', 'profile', 'saveProfile', 'editProfile', 'customProfileField', 'cancelCalibration'].map(function(id) {
     return document.getElementById(id);
 }), document, window);

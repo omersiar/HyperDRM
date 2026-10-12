@@ -64,4 +64,4 @@ function setupFormEditors(ids, doc, win) {
         }
     });
 }
-setupFormEditors(['host', 'port', 'piccapPort', 'token', 'customProfile'], document, window);
+setupFormEditors(['host', 'port', 'piccapPort', 'captureInterval', 'token', 'customProfile'], document, window);

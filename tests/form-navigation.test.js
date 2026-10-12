@@ -7,7 +7,7 @@ function element(id,input){return {id,tagName:input?'INPUT':'DIV',type:'text',re
  focus(){if(doc.activeElement && doc.activeElement!==this)doc.activeElement.blur();doc.activeElement=this;if(input)inputFocuses++;},
  blur(){if(this.handlers.blur)this.handlers.blur();if(doc.activeElement===this)doc.activeElement=null;}
 };}
-['host','port','piccapPort','token','customProfile'].forEach(id=>{elements[id]=element(id,true);elements[id+'Field']=element(id+'Field',false);});
+['host','port','piccapPort','captureInterval','token','customProfile'].forEach(id=>{elements[id]=element(id,true);elements[id+'Field']=element(id+'Field',false);});
 ['overview','receiver','calibration'].forEach(key=>{elements[key+'Panel']=element(key+'Panel');elements[key+'Tab']=element(key+'Tab');});
 ['start','receiver','calibrate','calibrationShortcut'].forEach(id=>elements[id]=element(id));
 const win={addEventListener(k,f){windowEvents[k]=f;}};

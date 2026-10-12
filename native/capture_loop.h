@@ -83,6 +83,8 @@ static int tick(void *unused) {
         capture_ctx.settling = 2;
         return 1;
     }
+    if (capture_ctx.sample_at && now - capture_ctx.sample_at < target_capture_interval(&target))
+        return 1;
     Histogram hist[16] = {0};
     int rc = vt_get(capture_ctx.handle, hist);
     bool populated = !rc && histogram_populated(hist);
