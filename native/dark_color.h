@@ -7,10 +7,10 @@ static inline void dark_color_filter(unsigned char color[3]) {
     for (unsigned c = 1; c < 3; c++)
         if (color[c] > peak)
             peak = color[c];
-    if (peak >= 24)
+    if (peak >= 32)
         return;
-    unsigned gain = peak > 12 ? peak - 12 : 0;
+    unsigned gain = peak > 16 ? peak - 16 : 0;
     for (unsigned c = 0; c < 3; c++)
-        color[c] = (unsigned char)((color[c] * gain + 6) / 12);
+        color[c] = (unsigned char)((color[c] * gain + 8) / 16);
 }
 #endif
