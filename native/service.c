@@ -199,6 +199,7 @@ static bool respond(void *h, void *m, const char *s) {
 #include "receiver_stream.h"
 #include "source_bridge.h"
 #include "service_api.h"
+#include "dark_color.h"
 #include "capture_loop.h"
 static void *symbol(void *lib, const char *name) {
     void *s = dlsym(lib, name);

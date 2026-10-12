@@ -153,11 +153,14 @@ static int tick(void *unused) {
     }
     for (int c = 0; c < 3; c++)
         capture_ctx.sent_rgb[c] = (unsigned char)(aggregate[c] / 16);
+    dark_color_filter(capture_ctx.sent_rgb);
     unsigned char boosted_mean[3];
     boost_color(capture_ctx.sent_rgb, boosted_mean);
     memcpy(capture_ctx.sent_rgb, boosted_mean, 3);
     unsigned char mapped_rgb[16][3], stable_rgb[16][3];
     calibration_colors(capture_ctx.rgb, mapped_rgb);
+    for (unsigned i = 0; i < 16; i++)
+        dark_color_filter(mapped_rgb[i]);
     continuity_frame(&capture_ctx.continuity, true, mapped_rgb, now, stable_rgb);
     receiver_layout.interpolation = receiver_layout.count && calibration_effective() != CAL_AVERAGE;
     char *line = region_command(stable_rgb, receiver_layout.blends, receiver_layout.count, 1500);
