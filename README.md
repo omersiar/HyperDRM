@@ -27,7 +27,7 @@ Only the own service is modified. Optional Auto PicCap can configure its receive
 
 ## Installation
 
-The current package is [HyperDRM_0.13.2_arm.ipk](HyperDRM_0.13.2_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
+The current package is [HyperDRM_0.13.3_arm.ipk](HyperDRM_0.13.3_arm.ipk). Install it using the TV's webOS/Homebrew package installation workflow.
 
 Elevate the installed own service through Homebrew Channel:
 
@@ -235,3 +235,5 @@ receiver-output and simulated service-lifecycle tests with ASan/UBSan. These hos
 tests do not replace real LG capture and remote-control validation on a TV.
 
 Histogram near-black handling suppresses colors with a maximum RGB channel of 16 or less, gradually restores brightness between 16 and 32, and preserves brighter colors. This applies only to histogram output; PicCap, receiver calibration and raw calibration samples are unchanged.
+
+Thin letterbox detection compares both edges against lit interior histogram samples and requires a consistently dark upper edge for at least two seconds. Histogram probes cannot determine the exact bar height or guarantee detection on every scene.

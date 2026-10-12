@@ -1,4 +1,4 @@
 #ifndef HYPERDRM_VERSION_H
 #define HYPERDRM_VERSION_H
-#define HYPERDRM_VERSION "0.13.2"
+#define HYPERDRM_VERSION "0.13.3"
 #endif
